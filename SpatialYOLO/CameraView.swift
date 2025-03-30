@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import RealityKit
 
 struct BoundingBoxOverlay: View {
     let model: AppModel

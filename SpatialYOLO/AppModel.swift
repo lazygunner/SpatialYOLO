@@ -24,11 +24,9 @@ public class AppModel: ObservableObject {
     var immersiveSpaceState = ImmersiveSpaceState.closed
         
     var selectedTab = 0
-
-
     
-        
-    private var arKitSession = ARKitSession()
+    var arKitSession = ARKitSession()
+    var worldTracking = WorldTrackingProvider()
 
     var capturedImage: UIImage?
 
@@ -88,7 +86,6 @@ public class AppModel: ObservableObject {
 
         print("Camera authorization successful, starting ARKit session...")
         
-        let worldTracking = WorldTrackingProvider()
         try? await arKitSession.run([cameraFrameProvider, worldTracking])
 
         print("ARKit session is running")

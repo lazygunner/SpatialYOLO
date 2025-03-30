@@ -23,7 +23,7 @@ struct ToggleImmersiveSpaceButton: View {
                 switch appModel.immersiveSpaceState {
                     case .open:
                         appModel.immersiveSpaceState = .inTransition
-                        dismissWindow(id: "cameraVolume")
+                        openWindow(id: "main")
                         await dismissImmersiveSpace()
                         // Don't set immersiveSpaceState to .closed because there
                         // are multiple paths to ImmersiveView.onDisappear().
@@ -31,13 +31,13 @@ struct ToggleImmersiveSpaceButton: View {
 
                     case .closed:
                         appModel.immersiveSpaceState = .inTransition
-                        openWindow(id: "cameraVolume")
 
                         switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
                             case .opened:
                                 // Don't set immersiveSpaceState to .open because there
                                 // may be multiple paths to ImmersiveView.onAppear().
                                 // Only set .open in ImmersiveView.onAppear().
+                                dismissWindow(id: "main")
                                 break
 
                             case .userCancelled, .error:
@@ -55,7 +55,7 @@ struct ToggleImmersiveSpaceButton: View {
                 }
             }
         } label: {
-            Text(appModel.immersiveSpaceState == .open ? "退出识别" : "开始识别")
+            Text(appModel.immersiveSpaceState == .open ? "Exit" : "Start")
         }
         .disabled(appModel.immersiveSpaceState == .inTransition)
         .animation(.none, value: 0)

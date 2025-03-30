@@ -25,15 +25,6 @@ struct SpatialYOLOApp: App {
 
             }
         }
-        
-        WindowGroup(id: "cameraVolume") {
-            BoundingBoxOverlay(model: appModel)
-                .environment(appModel)
-        }
-        .windowStyle(.volumetric)
-        .defaultWindowPlacement { content, context in
-            return WindowPlacement(.trailing(context.windows.first(where: { $0.id == "main" })!))
-        }
 
         ImmersiveSpace(id: appModel.immersiveSpaceID) {
             ImmersiveView(appModel: appModel)
