@@ -13,13 +13,30 @@ struct SpatialYOLOApp: App {
     @State private var appModel = AppModel()
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup(id: "main") {
+            TabView (selection: $appModel.selectedTab) {
+
+                ContentView(appModel: appModel)
+                    .tabItem {
+                        Label("识别", systemImage: "sparkle.magnifyingglass")
+                    }
+                    .tag(1)
+                    .environment(appModel)
+
+            }
+        }
+        
+        WindowGroup(id: "cameraVolume") {
+            BoundingBoxOverlay(model: appModel)
                 .environment(appModel)
+        }
+        .windowStyle(.volumetric)
+        .defaultWindowPlacement { content, context in
+            return WindowPlacement(.trailing(context.windows.first(where: { $0.id == "main" })!))
         }
 
         ImmersiveSpace(id: appModel.immersiveSpaceID) {
-            ImmersiveView()
+            ImmersiveView(appModel: appModel)
                 .environment(appModel)
                 .onAppear {
                     appModel.immersiveSpaceState = .open
@@ -29,5 +46,6 @@ struct SpatialYOLOApp: App {
                 }
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
+        
      }
 }

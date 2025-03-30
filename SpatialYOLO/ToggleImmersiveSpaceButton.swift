@@ -9,10 +9,13 @@ import SwiftUI
 
 struct ToggleImmersiveSpaceButton: View {
 
-    @Environment(AppModel.self) private var appModel
+    var appModel: AppModel
 
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @Environment(\.openWindow) var openWindow
+    @Environment(\.dismissWindow) var dismissWindow
+
 
     var body: some View {
         Button {
@@ -20,6 +23,7 @@ struct ToggleImmersiveSpaceButton: View {
                 switch appModel.immersiveSpaceState {
                     case .open:
                         appModel.immersiveSpaceState = .inTransition
+                        dismissWindow(id: "cameraVolume")
                         await dismissImmersiveSpace()
                         // Don't set immersiveSpaceState to .closed because there
                         // are multiple paths to ImmersiveView.onDisappear().
@@ -27,6 +31,8 @@ struct ToggleImmersiveSpaceButton: View {
 
                     case .closed:
                         appModel.immersiveSpaceState = .inTransition
+                        openWindow(id: "cameraVolume")
+
                         switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
                             case .opened:
                                 // Don't set immersiveSpaceState to .open because there
@@ -49,7 +55,7 @@ struct ToggleImmersiveSpaceButton: View {
                 }
             }
         } label: {
-            Text(appModel.immersiveSpaceState == .open ? "Hide Immersive Space" : "Show Immersive Space")
+            Text(appModel.immersiveSpaceState == .open ? "退出识别" : "开始识别")
         }
         .disabled(appModel.immersiveSpaceState == .inTransition)
         .animation(.none, value: 0)
