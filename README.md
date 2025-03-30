@@ -8,6 +8,7 @@ pip install ultralytics
 ```
 ### 2. Select Model
 ![](doc/1.png)
+
 Here we choose yolo11n because it has a small model size and fast speed.
 ### 3. Export to CoreML Supported Format
 ```

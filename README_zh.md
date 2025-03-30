@@ -8,6 +8,7 @@ pip install ultralytics
 ```
 ### 2.选择模型
 ![](doc/1.png)
+
 这里我们选择 yolo11n，因为模型体积小速度快。
 ### 3.导出coreml支持的格式
 ```
