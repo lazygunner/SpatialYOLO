@@ -28,9 +28,19 @@ public class AppModel: ObservableObject {
     var arKitSession = ARKitSession()
     var worldTracking = WorldTrackingProvider()
 
-    var capturedImage: UIImage?
+    // 左摄像头相关
+    var capturedImageLeft: UIImage?
+    private var pixelBufferLeft: CVPixelBuffer?
+    var boundingBoxesLeft: [CGRect] = []
+    var detectedClassesLeft: [String] = []
+    var confidencesLeft: [Float] = []
 
-    private var pixelBuffer: CVPixelBuffer?
+    // 右摄像头相关
+    var capturedImageRight: UIImage?
+    private var pixelBufferRight: CVPixelBuffer?
+    var boundingBoxesRight: [CGRect] = []
+    var detectedClassesRight: [String] = []
+    var confidencesRight: [Float] = []
 
     private var cameraAccessAuthorizationStatus = ARKitSession.AuthorizationStatus.notDetermined
     var panelAttachment: Entity = Entity()
@@ -40,12 +50,10 @@ public class AppModel: ObservableObject {
     
     var instructionAttachment: Entity = Entity()
     
-    // Vision parts
-    var requests = [VNRequest]()
+    // Vision parts - 为左右摄像头分别创建
+    var requestsLeft = [VNRequest]()
+    var requestsRight = [VNRequest]()
     var bufferSize: CGSize = .zero
-    var boundingBoxes: [CGRect] = []
-    var detectedClasses: [String] = []
-    var confidences: [Float] = []
     var classNames: [String] = []
     
     var currentIntrinsics: simd_float3x3 = simd_float3x3(.zero)
@@ -56,8 +64,16 @@ public class AppModel: ObservableObject {
     
     var imageCropOption: VNImageCropAndScaleOption = .scaleFit
 
+    // 为了向后兼容，保留原来的属性（指向左摄像头）
+    var capturedImage: UIImage? { capturedImageLeft }
+    var boundingBoxes: [CGRect] { boundingBoxesLeft }
+    var detectedClasses: [String] { detectedClassesLeft }
+    var confidences: [Float] { confidencesLeft }
+    var requests: [VNRequest] {
+        get { requestsLeft }
+        set { requestsLeft = newValue }
+    }
 
-    
     func startSession() async {
         guard CameraFrameProvider.isSupported else {
             print("Device does not support main camera")
@@ -69,8 +85,7 @@ public class AppModel: ObservableObject {
             print("User did not authorize camera access")
             return
         }
-
-        let formats = CameraVideoFormat.supportedVideoFormats(for: .main, cameraPositions: [.left])
+        let formats = CameraVideoFormat.supportedVideoFormats(for: .main, cameraPositions: [.left, .right])
         let cameraFrameProvider = CameraFrameProvider()
 
         print("Requesting camera authorization...")
@@ -112,22 +127,43 @@ public class AppModel: ObservableObject {
             
             lastProcessTime = currentTime
 
-            guard let mainCameraSample = cameraFrame.sample(for: .left) else {
-                print("Unable to get main camera sample")
-                continue
+            let samples = cameraFrame.samples
+            let leftSample = samples.filter {
+                return $0.parameters.cameraPosition == .left
             }
-
-            self.pixelBuffer = mainCameraSample.pixelBuffer
-            
-            let imageRequestHandler = VNImageRequestHandler(cvPixelBuffer: self.pixelBuffer!)
-            
-            do {
-                try imageRequestHandler.perform(self.requests)
-            } catch {
-                print(error)
+            let rightSample = samples.filter {
+                return $0.parameters.cameraPosition == .right
             }
             
-            self.capturedImage = self.convertToUIImage(pixelBuffer: self.pixelBuffer)
+            // 处理左摄像头
+            if !leftSample.isEmpty {
+                self.pixelBufferLeft = leftSample[0].pixelBuffer
+                
+                let imageRequestHandlerLeft = VNImageRequestHandler(cvPixelBuffer: self.pixelBufferLeft!)
+                
+                do {
+                    try imageRequestHandlerLeft.perform(self.requestsLeft)
+                } catch {
+                    print("Left camera error: \(error)")
+                }
+                
+                self.capturedImageLeft = self.convertToUIImage(pixelBuffer: self.pixelBufferLeft)
+            }
+            
+            // 处理右摄像头
+            if !rightSample.isEmpty {
+                self.pixelBufferRight = rightSample[0].pixelBuffer
+                
+                let imageRequestHandlerRight = VNImageRequestHandler(cvPixelBuffer: self.pixelBufferRight!)
+                
+                do {
+                    try imageRequestHandlerRight.perform(self.requestsRight)
+                } catch {
+                    print("Right camera error: \(error)")
+                }
+                
+                self.capturedImageRight = self.convertToUIImage(pixelBuffer: self.pixelBufferRight)
+            }
         }
     }
 
