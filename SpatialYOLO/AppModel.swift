@@ -10,6 +10,8 @@ import ARKit
 import RealityKit
 import Vision
 import simd
+import CoreML
+import Accelerate
 
 /// Maintains app-wide state
 @MainActor
@@ -42,6 +44,16 @@ public class AppModel: ObservableObject {
     var detectedClassesRight: [String] = []
     var confidencesRight: [Float] = []
 
+    // 深度图相关
+    var depthImage: UIImage?
+    private var depthPixelBuffer: CVPixelBuffer?
+    
+    // 深度估计模型和像素缓冲池
+    private var depthModel: RaftStereo512?
+    private var pixelBufferPool: CVPixelBufferPool?
+    private var stackedBufferPool: CVPixelBufferPool?
+    private let ciContext = CIContext()
+
     private var cameraAccessAuthorizationStatus = ARKitSession.AuthorizationStatus.notDetermined
     var panelAttachment: Entity = Entity()
     // ARKit Hand Tracking
@@ -73,44 +85,205 @@ public class AppModel: ObservableObject {
         get { requestsLeft }
         set { requestsLeft = newValue }
     }
+    
+    // 初始化深度模型
+    private func initializeDepthModel() {
+        let config = MLModelConfiguration()
+        config.computeUnits = .cpuAndGPU
+        
+        do {
+            depthModel = try RaftStereo512(configuration: config)
+            print("深度估计模型初始化成功")
+        } catch {
+            print("深度估计模型初始化失败: \(error)")
+        }
+    }
+    
+    // 重新缩放图像到512x512
+    private func rescaleImage(pixelBuffer: CVPixelBuffer) -> (CVPixelBuffer, Float, Int, Int)? {
+        if pixelBufferPool == nil {
+            let attrs: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: 512,
+                kCVPixelBufferHeightKey as String: 512,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ]
+            CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pixelBufferPool)
+        }
+        
+        guard let pool = pixelBufferPool else { return nil }
+        
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        
+        let sourceWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let sourceHeight = CVPixelBufferGetHeight(pixelBuffer)
+        
+        let cropSize = min(sourceWidth, sourceHeight)
+        let cropX = (sourceWidth - cropSize) / 2
+        let cropY = (sourceHeight - cropSize) / 2
+        
+        let cropRect = CGRect(x: cropX, y: cropY, width: cropSize, height: cropSize)
+        let croppedImage = CIImage(cvPixelBuffer: pixelBuffer).cropped(to: cropRect)
+
+        let scale = 512.0 / CGFloat(cropSize)
+        let translate = CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y)
+        let scaleTransform = CGAffineTransform(scaleX: scale, y: scale)
+
+        let ciImage = croppedImage.transformed(by: translate.concatenating(scaleTransform))
+        
+        var outputBuffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outputBuffer)
+        
+        guard let output = outputBuffer else {
+            print("无法从像素缓冲池分配 CVPixelBuffer")
+            return nil
+        }
+        
+        ciContext.render(ciImage, to: output, bounds: CGRect(x: 0, y: 0, width: 512, height: 512), colorSpace: CGColorSpaceCreateDeviceRGB())
+        
+        return (output, 512.0 / Float(cropSize), cropX, cropY)
+    }
+    
+    // 将深度 MLMultiArray 转换为可显示的 RGBA 图像
+    private func multiArrayToRGBA(_ multiArray: MLMultiArray) -> CVPixelBuffer? {
+        if pixelBufferPool == nil {
+            let attrs: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: 512,
+                kCVPixelBufferHeightKey as String: 512,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ]
+            CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pixelBufferPool)
+        }
+        
+        guard let pool = pixelBufferPool else { return nil }
+        
+        guard multiArray.dataType == .float32,
+              multiArray.shape.count == 4,
+              multiArray.shape[0].intValue == 1,
+              multiArray.shape[1].intValue == 1 else {
+            print("不支持的形状或类型")
+            return nil
+        }
+
+        let height = multiArray.shape[2].intValue
+        let width = multiArray.shape[3].intValue
+        let count = width * height
+
+        // 绑定到 float32 指针
+        let floatPtr = multiArray.dataPointer.bindMemory(to: Float.self, capacity: count)
+        let buffer = UnsafeBufferPointer(start: floatPtr, count: count)
+
+        // 找到最小值和最大值
+        var minVal: Float = 0
+        var maxVal: Float = 0
+        vDSP_minv(floatPtr, 1, &minVal, vDSP_Length(count))
+        vDSP_maxv(floatPtr, 1, &maxVal, vDSP_Length(count))
+
+        let range = maxVal - minVal
+        if range == 0 {
+            print("数值均匀 — 无法缩放")
+            return nil
+        }
+
+        // 创建像素缓冲区
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
+
+        guard let bufferOut = pixelBuffer else { return nil }
+
+        CVPixelBufferLockBaseAddress(bufferOut, [])
+        defer { CVPixelBufferUnlockBaseAddress(bufferOut, []) }
+
+        let outBase = CVPixelBufferGetBaseAddress(bufferOut)!.assumingMemoryBound(to: UInt8.self)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(bufferOut)
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = y * width + x
+                let value = buffer[i]
+
+                // 标准化到 [0, 1]
+                let norm = (value - minVal) / range
+                let scaled = UInt8(clamping: Int(norm * 255))
+
+                let pixelPtr = outBase + y * bytesPerRow + x * 4
+                pixelPtr[0] = scaled     // R
+                pixelPtr[1] = scaled     // G
+                pixelPtr[2] = scaled     // B
+                pixelPtr[3] = 255        // A (完全不透明)
+            }
+        }
+
+        return bufferOut
+    }
+    
+    // 处理深度估计
+    private func processDepthEstimation() async {
+        guard let model = depthModel,
+              let leftBuffer = pixelBufferLeft,
+              let rightBuffer = pixelBufferRight else {
+            return
+        }
+        
+        guard let leftRescaled = rescaleImage(pixelBuffer: leftBuffer),
+              let rightRescaled = rescaleImage(pixelBuffer: rightBuffer) else {
+            return
+        }
+        
+        do {
+            let prediction = try await model.prediction(input: RaftStereo512Input(left_: leftRescaled.0, right_: rightRescaled.0))
+            
+            if let depthBuffer = multiArrayToRGBA(prediction.var_4967) {
+                self.depthPixelBuffer = depthBuffer
+                self.depthImage = convertToUIImage(pixelBuffer: depthBuffer)
+            }
+        } catch {
+            print("深度估计错误: \(error)")
+        }
+    }
 
     func startSession() async {
         guard CameraFrameProvider.isSupported else {
-            print("Device does not support main camera")
+            print("设备不支持主摄像头")
             return
         }
 
+        // 初始化深度模型
+        initializeDepthModel()
+
         await requestCameraAccess()
         guard cameraAccessAuthorizationStatus == .allowed else {
-            print("User did not authorize camera access")
+            print("用户未授权摄像头访问")
             return
         }
         let formats = CameraVideoFormat.supportedVideoFormats(for: .main, cameraPositions: [.left, .right])
         let cameraFrameProvider = CameraFrameProvider()
 
-        print("Requesting camera authorization...")
+        print("请求摄像头授权...")
 
         let authorizationResult = await arKitSession.requestAuthorization(for: [.cameraAccess])
 
         cameraAccessAuthorizationStatus = authorizationResult[.cameraAccess] ?? .notDetermined
 
         guard cameraAccessAuthorizationStatus == .allowed else {
-            print("Camera data access authorization failed")
+            print("摄像头数据访问授权失败")
             return
         }
 
-        print("Camera authorization successful, starting ARKit session...")
+        print("摄像头授权成功，启动 ARKit 会话...")
         
         try? await arKitSession.run([cameraFrameProvider, worldTracking])
 
-        print("ARKit session is running")
+        print("ARKit 会话正在运行")
 
         guard let cameraFrameUpdates = cameraFrameProvider.cameraFrameUpdates(for: formats[0]) else {
-            print("Unable to get camera frame updates")
+            print("无法获取摄像头帧更新")
             return
         }
 
-        print("Successfully got camera frame updates")
+        print("成功获取摄像头帧更新")
 
         // 添加帧率控制
         var lastProcessTime = Date()
@@ -144,7 +317,7 @@ public class AppModel: ObservableObject {
                 do {
                     try imageRequestHandlerLeft.perform(self.requestsLeft)
                 } catch {
-                    print("Left camera error: \(error)")
+                    print("左摄像头错误: \(error)")
                 }
                 
                 self.capturedImageLeft = self.convertToUIImage(pixelBuffer: self.pixelBufferLeft)
@@ -159,10 +332,15 @@ public class AppModel: ObservableObject {
                 do {
                     try imageRequestHandlerRight.perform(self.requestsRight)
                 } catch {
-                    print("Right camera error: \(error)")
+                    print("右摄像头错误: \(error)")
                 }
                 
                 self.capturedImageRight = self.convertToUIImage(pixelBuffer: self.pixelBufferRight)
+            }
+            
+            // 如果左右摄像头都有数据，进行深度估计
+            if !leftSample.isEmpty && !rightSample.isEmpty {
+                await processDepthEstimation()
             }
         }
     }
@@ -175,11 +353,11 @@ public class AppModel: ObservableObject {
 
         if cameraAccessAuthorizationStatus == .allowed {
 
-            print("User granted camera access")
+            print("用户授权摄像头访问")
 
         } else {
 
-            print("User denied camera access")
+            print("用户拒绝摄像头访问")
 
         }
 
@@ -188,7 +366,7 @@ public class AppModel: ObservableObject {
     private func convertToUIImage(pixelBuffer: CVPixelBuffer?) -> UIImage? {
 
         guard let pixelBuffer = pixelBuffer else {
-            print("Pixel buffer is nil")
+            print("像素缓冲区为空")
             return nil
         }
 
@@ -198,7 +376,7 @@ public class AppModel: ObservableObject {
             return UIImage(cgImage: cgImage)
         }
         
-        print("Unable to create CGImage")
+        print("无法创建 CGImage")
         return nil
     }
     

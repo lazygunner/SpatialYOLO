@@ -96,6 +96,51 @@ struct DualCameraView: View {
     }
 }
 
+// 新增的深度图显示组件
+struct DepthView: View {
+    let model: AppModel
+    
+    var body: some View {
+        VStack(spacing: 5) {
+            Text("深度图")
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            GeometryReader { geometry in
+                ZStack {
+                    // 外边框
+                    Rectangle()
+                        .path(in: CGRect(origin: CGPoint(x: 0, y: 0), size: CGSize(width: geometry.size.width, height: geometry.size.height)))
+                        .stroke(Color.purple, lineWidth: 2)
+                    
+                    // 深度图显示
+                    Image(uiImage: model.depthImage ?? UIImage())
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .overlay(
+                            // 如果没有深度图，显示占位符
+                            Group {
+                                if model.depthImage == nil {
+                                    VStack {
+                                        Image(systemName: "cube.transparent")
+                                            .font(.system(size: 50))
+                                            .foregroundColor(.gray)
+                                        Text("处理深度图中...")
+                                            .font(.caption)
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                            }
+                        )
+                }
+            }
+        }
+        .frame(width: 960, height: 540)
+        .glassBackgroundEffect()
+    }
+}
+
 struct BoundingBoxOverlay: View {
     let model: AppModel
     

@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		1DF1F8102D9918CC00147CE2 /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = 1DF1F80F2D9918CC00147CE2 /* RealityKitContent */; };
+		5484EFBC2E071EA000E390E0 /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = 5484EFBB2E071EA000E390E0 /* RealityKitContent */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -20,6 +20,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				opencv2.xcframework,
 			);
 			target = 1DF1F8092D9918CC00147CE2 /* SpatialYOLO */;
 		};
@@ -41,7 +42,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				1DF1F8102D9918CC00147CE2 /* RealityKitContent in Frameworks */,
+				5484EFBC2E071EA000E390E0 /* RealityKitContent in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -53,6 +54,7 @@
 			children = (
 				1DF1F80C2D9918CC00147CE2 /* SpatialYOLO */,
 				1DF1F80D2D9918CC00147CE2 /* Packages */,
+				5484EFBA2E071EA000E390E0 /* Frameworks */,
 				1DF1F80B2D9918CC00147CE2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -71,6 +73,13 @@
 				1DF1F80E2D9918CC00147CE2 /* RealityKitContent */,
 			);
 			path = Packages;
+			sourceTree = "<group>";
+		};
+		5484EFBA2E071EA000E390E0 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -93,7 +102,7 @@
 			);
 			name = SpatialYOLO;
 			packageProductDependencies = (
-				1DF1F80F2D9918CC00147CE2 /* RealityKitContent */,
+				5484EFBB2E071EA000E390E0 /* RealityKitContent */,
 			);
 			productName = SpatialYOLO;
 			productReference = 1DF1F80A2D9918CC00147CE2 /* SpatialYOLO.app */;
@@ -178,6 +187,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 7;
+				XROS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Debug;
 		};
@@ -205,6 +215,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 7;
+				XROS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Release;
 		};
@@ -351,7 +362,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		1DF1F80F2D9918CC00147CE2 /* RealityKitContent */ = {
+		5484EFBB2E071EA000E390E0 /* RealityKitContent */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RealityKitContent;
 		};
