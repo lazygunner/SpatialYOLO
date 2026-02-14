@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import VisionEntitlementServices
 
 @main
 struct SpatialYOLOApp: App {

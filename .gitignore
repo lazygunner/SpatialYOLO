@@ -1,2 +1,4 @@
 Enterprise.license
 *.mlpackage
+*.license
+Build/

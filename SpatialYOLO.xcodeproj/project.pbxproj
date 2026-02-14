@@ -20,7 +20,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
-				opencv2.xcframework,
 			);
 			target = 1DF1F8092D9918CC00147CE2 /* SpatialYOLO */;
 		};
