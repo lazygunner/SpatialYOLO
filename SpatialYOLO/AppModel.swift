@@ -12,6 +12,7 @@ import Vision
 import simd
 import CoreML
 import Accelerate
+import VisionEntitlementServices
 
 /// Maintains app-wide state
 @MainActor
@@ -24,7 +25,14 @@ public class AppModel: ObservableObject {
         case open
     }
     var immersiveSpaceState = ImmersiveSpaceState.closed
-        
+
+    /// 功能模式
+    enum FeatureMode {
+        case spatialYOLO    // 双目 YOLO 检测 + 深度估计
+        case geminiLive     // Gemini Live 交互助手
+    }
+    var activeFeature: FeatureMode = .spatialYOLO
+
     var selectedTab = 0
     
     var arKitSession = ARKitSession()
@@ -85,7 +93,40 @@ public class AppModel: ObservableObject {
         get { requestsLeft }
         set { requestsLeft = newValue }
     }
-    
+
+    // MARK: - Gemini Live
+    var geminiService = GeminiLiveService(apiKey: "YOUR_API_KEY_HERE")
+    var isGeminiActive: Bool = false
+    var userInputText: String = ""
+    private var lastGeminiSendTime = Date.distantPast
+
+    // MARK: - 企业许可证
+    var isLicenseValid: Bool = false
+    var isCameraEntitled: Bool = false
+
+    /// 检查企业许可证和主摄像头权限
+    func checkLicenseStatus() {
+        let license = EnterpriseLicenseDetails.shared
+        print(license.expirationTimestamp)
+
+        guard license.licenseStatus == .valid else {
+            print("企业许可证无效: \(license.licenseStatus)")
+            isLicenseValid = false
+            isCameraEntitled = false
+            return
+        }
+
+        isLicenseValid = true
+
+        if license.isApproved(for: .mainCameraAccess) {
+            print("主摄像头访问已授权，启用功能...")
+            isCameraEntitled = true
+        } else {
+            print("主摄像头访问未获批准")
+            isCameraEntitled = false
+        }
+    }
+
     // 初始化深度模型
     private func initializeDepthModel() {
         let config = MLModelConfiguration()
@@ -245,6 +286,13 @@ public class AppModel: ObservableObject {
     }
 
     func startSession() async {
+        // 检查企业许可证
+        checkLicenseStatus()
+        guard isLicenseValid, isCameraEntitled else {
+            print("企业许可证检查未通过，无法使用摄像头功能")
+            return
+        }
+
         guard CameraFrameProvider.isSupported else {
             print("设备不支持主摄像头")
             return
@@ -259,6 +307,11 @@ public class AppModel: ObservableObject {
             return
         }
         let formats = CameraVideoFormat.supportedVideoFormats(for: .main, cameraPositions: [.left, .right])
+        guard let selectedFormat = formats.first else {
+            print("未找到支持的摄像头视频格式")
+            return
+        }
+
         let cameraFrameProvider = CameraFrameProvider()
 
         print("请求摄像头授权...")
@@ -273,12 +326,12 @@ public class AppModel: ObservableObject {
         }
 
         print("摄像头授权成功，启动 ARKit 会话...")
-        
+
         try? await arKitSession.run([cameraFrameProvider, worldTracking])
 
         print("ARKit 会话正在运行")
 
-        guard let cameraFrameUpdates = cameraFrameProvider.cameraFrameUpdates(for: formats[0]) else {
+        guard let cameraFrameUpdates = cameraFrameProvider.cameraFrameUpdates(for: selectedFormat) else {
             print("无法获取摄像头帧更新")
             return
         }
@@ -311,36 +364,44 @@ public class AppModel: ObservableObject {
             // 处理左摄像头
             if !leftSample.isEmpty {
                 self.pixelBufferLeft = leftSample[0].pixelBuffer
-                
-                let imageRequestHandlerLeft = VNImageRequestHandler(cvPixelBuffer: self.pixelBufferLeft!)
-                
-                do {
-                    try imageRequestHandlerLeft.perform(self.requestsLeft)
-                } catch {
-                    print("左摄像头错误: \(error)")
-                }
-                
                 self.capturedImageLeft = self.convertToUIImage(pixelBuffer: self.pixelBufferLeft)
-            }
-            
-            // 处理右摄像头
-            if !rightSample.isEmpty {
-                self.pixelBufferRight = rightSample[0].pixelBuffer
-                
-                let imageRequestHandlerRight = VNImageRequestHandler(cvPixelBuffer: self.pixelBufferRight!)
-                
-                do {
-                    try imageRequestHandlerRight.perform(self.requestsRight)
-                } catch {
-                    print("右摄像头错误: \(error)")
+
+                // YOLO 检测放到后台线程，不阻塞主线程帧循环和 UI 交互
+                let leftBuffer = self.pixelBufferLeft!
+                let leftRequests = self.requestsLeft
+                Task.detached {
+                    let handler = VNImageRequestHandler(cvPixelBuffer: leftBuffer)
+                    try? handler.perform(leftRequests)
                 }
-                
-                self.capturedImageRight = self.convertToUIImage(pixelBuffer: self.pixelBufferRight)
             }
-            
-            // 如果左右摄像头都有数据，进行深度估计
-            if !leftSample.isEmpty && !rightSample.isEmpty {
-                await processDepthEstimation()
+
+            // Spatial YOLO 模式：处理右摄像头 + 深度估计
+            if activeFeature == .spatialYOLO {
+                if !rightSample.isEmpty {
+                    self.pixelBufferRight = rightSample[0].pixelBuffer
+                    self.capturedImageRight = self.convertToUIImage(pixelBuffer: self.pixelBufferRight)
+
+                    let rightBuffer = self.pixelBufferRight!
+                    let rightRequests = self.requestsRight
+                    Task.detached {
+                        let handler = VNImageRequestHandler(cvPixelBuffer: rightBuffer)
+                        try? handler.perform(rightRequests)
+                    }
+                }
+
+                // 如果左右摄像头都有数据，进行深度估计
+                if !leftSample.isEmpty && !rightSample.isEmpty {
+                    await processDepthEstimation()
+                }
+            }
+
+            // Gemini Live 模式：每 1 秒采样一帧发送（使用左摄像头）
+            if activeFeature == .geminiLive, isGeminiActive, let leftBuffer = self.pixelBufferLeft {
+                let timeSinceLastGemini = currentTime.timeIntervalSince(lastGeminiSendTime)
+                if timeSinceLastGemini >= 1.0 {
+                    lastGeminiSendTime = currentTime
+                    sendFrameToGemini(leftBuffer)
+                }
             }
         }
     }

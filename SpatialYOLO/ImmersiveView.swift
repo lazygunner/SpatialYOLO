@@ -12,93 +12,118 @@ import ARKit
 
 struct ImmersiveView: View {
     var appModel: AppModel
-    let boundingBoxes: [CGRect] = [CGRect()]
     @State private var leftCameraEntity: Entity?
     @State private var rightCameraEntity: Entity?
     @State private var depthEntity: Entity?
+    @State private var geminiEntity: Entity?
+    @State private var geminiBoundingBoxEntity: Entity?
     @Environment(\.dismissWindow) private var dismissWindow
-    
+    @Environment(\.openWindow) private var openWindow
+
     var body: some View {
         RealityView { content, attachments in
-            
-            // 添加左摄像头 Attachment
-            if let leftCameraAttachment = attachments.entity(for: "leftCameraView") {
-                content.add(leftCameraAttachment)
-                leftCameraEntity = leftCameraAttachment
-            }
-            
-            // 添加右摄像头 Attachment
-            if let rightCameraAttachment = attachments.entity(for: "rightCameraView") {
-                content.add(rightCameraAttachment)
-                rightCameraEntity = rightCameraAttachment
-            }
-            
-            // 添加深度图 Attachment
-            if let depthAttachment = attachments.entity(for: "depthView") {
-                content.add(depthAttachment)
-                depthEntity = depthAttachment
-            }
-            
+
             let anchor = AnchorEntity(.head)
-            
-            // 设置左摄像头位置（左侧）
-            if let leftEntity = leftCameraEntity {
-                anchor.addChild(leftEntity)
-                leftEntity.position.z = -0.5
-                leftEntity.position.x = -0.35  // 更向左一些，为深度图留出空间
-                leftEntity.position.y = 0.0
-                leftEntity.transform.rotation = simd_quatf(angle: .pi / 12, axis: [0, 1, 0])
-                leftEntity.transform.scale = [0.4, 0.4, 0.4]  // 稍微缩小
+
+            switch appModel.activeFeature {
+            case .spatialYOLO:
+                setupSpatialYOLO(anchor: anchor, attachments: attachments)
+            case .geminiLive:
+                setupGeminiLive(anchor: anchor, attachments: attachments)
             }
-            
-            // 设置深度图位置（中央）
-            if let depthEnt = depthEntity {
-                anchor.addChild(depthEnt)
-                depthEnt.position.z = -0.5
-                depthEnt.position.x = 0.0   // 中央
-                depthEnt.position.y = 0.0
-                depthEnt.transform.scale = [0.4, 0.4, 0.4]
-            }
-            
-            // 设置右摄像头位置（右侧）
-            if let rightEntity = rightCameraEntity {
-                anchor.addChild(rightEntity)
-                rightEntity.position.z = -0.5
-                rightEntity.position.x = 0.35   // 更向右一些，为深度图留出空间
-                rightEntity.position.y = 0.0
-                rightEntity.transform.rotation = simd_quatf(angle: -.pi / 12, axis: [0, 1, 0])
-                rightEntity.transform.scale = [0.4, 0.4, 0.4]  // 稍微缩小
-            }
-            
+
             content.add(anchor)
-            
+
         } attachments: {
-            // 左摄像头附件
-            Attachment(id: "leftCameraView", {
-                VStack {
-                    DualCameraView(model: appModel, isLeft: true)
-                }
-            })
-            
-            // 深度图附件
-            Attachment(id: "depthView", {
-                VStack {
-                    DepthView(model: appModel)
-                }
-            })
-            
-            // 右摄像头附件
-            Attachment(id: "rightCameraView", {
+            // Spatial YOLO 附件
+            Attachment(id: "leftCameraView") {
+                DualCameraView(model: appModel, isLeft: true)
+            }
+
+            Attachment(id: "depthView") {
+                DepthView(model: appModel)
+            }
+
+            Attachment(id: "rightCameraView") {
                 VStack {
                     DualCameraView(model: appModel, isLeft: false)
-                    
-                    ToggleImmersiveSpaceButton(appModel: appModel)
+                    exitButton
                 }
-            })
+            }
+
+            // Gemini Live 附件
+            Attachment(id: "geminiBoundingBox") {
+                VStack {
+                    DualCameraView(model: appModel, isLeft: true)
+                    exitButton
+                }
+            }
+
+            Attachment(id: "geminiResponse") {
+                GeminiResponseView(appModel: appModel)
+            }
         }
         .task {
             appModel.setupVision()
             await appModel.startSession()
         }
+    }
+
+    // MARK: - Spatial YOLO 布局
+
+    private func setupSpatialYOLO(anchor: AnchorEntity, attachments: RealityViewAttachments) {
+        // 左摄像头（左侧）
+        if let attachment = attachments.entity(for: "leftCameraView") {
+            leftCameraEntity = attachment
+            attachment.position = SIMD3<Float>(-0.35, 0.0, -0.5)
+            attachment.transform.rotation = simd_quatf(angle: .pi / 12, axis: [0, 1, 0])
+            attachment.transform.scale = [0.4, 0.4, 0.4]
+            anchor.addChild(attachment)
+        }
+
+        // 深度图（中央）
+        if let attachment = attachments.entity(for: "depthView") {
+            depthEntity = attachment
+            attachment.position = SIMD3<Float>(0.0, 0.0, -0.5)
+            attachment.transform.scale = [0.4, 0.4, 0.4]
+            anchor.addChild(attachment)
+        }
+
+        // 右摄像头（右侧）
+        if let attachment = attachments.entity(for: "rightCameraView") {
+            rightCameraEntity = attachment
+            attachment.position = SIMD3<Float>(0.35, 0.0, -0.5)
+            attachment.transform.rotation = simd_quatf(angle: -.pi / 12, axis: [0, 1, 0])
+            attachment.transform.scale = [0.4, 0.4, 0.4]
+            anchor.addChild(attachment)
+        }
+    }
+
+    // MARK: - Gemini Live 布局
+
+    private func setupGeminiLive(anchor: AnchorEntity, attachments: RealityViewAttachments) {
+        // 摄像头画面 + 边界框（左侧）
+        if let attachment = attachments.entity(for: "geminiBoundingBox") {
+            geminiBoundingBoxEntity = attachment
+            attachment.position = SIMD3<Float>(-0.15, -0.05, -0.5)
+            attachment.transform.rotation = simd_quatf(angle: .pi / 15, axis: [0, 1, 0])
+            attachment.transform.scale = [0.4, 0.4, 0.4]
+            anchor.addChild(attachment)
+        }
+
+        // Gemini 响应面板（右侧）
+        if let attachment = attachments.entity(for: "geminiResponse") {
+            geminiEntity = attachment
+            attachment.position = SIMD3<Float>(0.2, -0.05, -0.5)
+            attachment.transform.rotation = simd_quatf(angle: -.pi / 15, axis: [0, 1, 0])
+            attachment.transform.scale = [0.4, 0.4, 0.4]
+            anchor.addChild(attachment)
+        }
+    }
+
+    // MARK: - 退出按钮
+
+    private var exitButton: some View {
+        ToggleImmersiveSpaceButton(appModel: appModel)
     }
 }

@@ -15,16 +15,8 @@ struct SpatialYOLOApp: App {
 
     var body: some Scene {
         WindowGroup(id: "main") {
-            TabView (selection: $appModel.selectedTab) {
-
-                ContentView(appModel: appModel)
-                    .tabItem {
-                        Label("识别", systemImage: "sparkle.magnifyingglass")
-                    }
-                    .tag(1)
-                    .environment(appModel)
-
-            }
+            ContentView(appModel: appModel)
+                .environment(appModel)
         }
 
         ImmersiveSpace(id: appModel.immersiveSpaceID) {

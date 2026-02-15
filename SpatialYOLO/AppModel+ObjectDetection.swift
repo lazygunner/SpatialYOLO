@@ -21,7 +21,9 @@ extension AppModel {
             let visionModel = try VNCoreMLModel(for: yolo11n.model)
 
             let objectRecognition = VNCoreMLRequest(model: visionModel, completionHandler: { (request, error) in
-                print("objectRecognition \(isLeft ? "Left" : "Right") \(error?.localizedDescription ?? "Success")")
+                if let error = error {
+                    print("[YOLO] \(isLeft ? "左" : "右")摄像头识别错误: \(error.localizedDescription)")
+                }
                 DispatchQueue.main.async(execute: {
                     // perform all the UI updates on the main queue
                     if let results = request.results {
@@ -53,9 +55,6 @@ extension AppModel {
     }
     
     func drawVisionRequestResults(_ results: [Any], _ request: Any, isLeft: Bool) {
-        print("Received results type: \(type(of: results)) for \(isLeft ? "Left" : "Right") camera")
-        print("Buffer size: \(bufferSize)")
-        
         // 清空之前的结果
         if isLeft {
             self.boundingBoxesLeft = []
@@ -79,8 +78,6 @@ extension AppModel {
             // Select only the label with the highest confidence.
             let topLabelObservation = objectObservation.labels[0]
             
-            print("Normalized bounding box (\(isLeft ? "Left" : "Right")): \(objectObservation.boundingBox)")
-                    
             // 存储检测结果
             if isLeft {
                 self.boundingBoxesLeft.append(objectObservation.boundingBox)
@@ -92,7 +89,6 @@ extension AppModel {
                 self.confidencesRight.append(Float(objectObservation.confidence * 100))
             }
             
-            print("Detected object (\(isLeft ? "Left" : "Right")): \(topLabelObservation.identifier) with confidence \(objectObservation.confidence * 100)%")
         }
     }
     
