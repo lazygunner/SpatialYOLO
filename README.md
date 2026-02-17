@@ -5,7 +5,7 @@
 Real-time object detection and AI visual assistant on Apple Vision Pro.
 
 - **Spatial YOLO** — Stereo camera + YOLOv11n object detection + stereo depth estimation
-- **Gemini Live** — Interactive AI assistant with real-time video + voice conversation via Google Gemini Live API
+- **AI Live** — Interactive AI assistant with real-time video + voice conversation, supports Google Gemini Live and Alibaba Qwen Omni
 
 ## I. Generate YOLO Model Supported by CoreML
 ### 1. Install ultralytics
@@ -44,21 +44,24 @@ After that, an entitlement file with a yellow icon will appear
 
 ![](doc/7.png)
 
-## III. Gemini Live API Configuration
+## III. AI Live API Configuration
 
-### 1. Get API Key
-Obtain a Gemini API Key from [Google AI Studio](https://aistudio.google.com/).
+### 1. Get API Keys
+- **Gemini:** Obtain a Gemini API Key from [Google AI Studio](https://aistudio.google.com/)
+- **Qwen:** Obtain a DashScope API Key from [Alibaba Cloud Bailian](https://bailian.console.aliyun.com/)
 
-### 2. Configure API Key
+### 2. Configure API Keys
 ```bash
 # Copy the template config file
 cp SpatialYOLO/Config.plist.example SpatialYOLO/Config.plist
 ```
 
-Edit `SpatialYOLO/Config.plist` and replace `YOUR_API_KEY_HERE` with your actual Gemini API Key:
+Edit `SpatialYOLO/Config.plist` and replace `YOUR_API_KEY_HERE` with your actual API Keys:
 ```xml
 <key>GEMINI_API_KEY</key>
-<string>your-actual-api-key</string>
+<string>your-gemini-api-key</string>
+<key>QWEN_API_KEY</key>
+<string>your-qwen-api-key</string>
 ```
 
 ### 3. Add Config.plist to Xcode Project
@@ -66,20 +69,31 @@ Add `Config.plist` to the Xcode project's target build resources so it can be re
 
 > **Note:** `Config.plist` is in `.gitignore` and will not be committed to the repository.
 
-### 4. Gemini Live Features
-- **Real-time Video:** Camera frames sampled at 1fps, JPEG compressed (max 1024px), sent via WebSocket
-- **Voice Input:** Microphone audio captured at 16kHz PCM, sent in real-time
-- **Audio Response:** Gemini responds with 24kHz PCM audio, played through AVAudioEngine
-- **Subtitles:** AI response text displayed as typewriter-effect overlay on the video feed
+### 4. Supported AI Providers
+
+**Gemini Live** (Google)
 - **Model:** `gemini-2.5-flash-native-audio-preview-12-2025` (Native Audio)
 - **Session Limit:** ~2 minutes for video + audio sessions
+
+**Qwen Omni** (Alibaba)
+- **Model:** `qwen3-omni-flash-realtime`
+- **Session Limit:** 120 minutes
+- **Server VAD:** Auto-detect speech start/stop
+- **Native Chinese:** Reliable audio transcription in Chinese
+
+**Common Features**
+- **Real-time Video:** Camera frames sampled at 1fps, JPEG compressed (max 1024px), sent via WebSocket
+- **Voice Input:** Microphone audio captured at 16kHz PCM, sent in real-time
+- **Audio Response:** AI responds with PCM audio, played through AVAudioEngine
+- **Subtitles:** AI response text displayed as typewriter-effect overlay on the video feed
+- **Provider Switch:** Toggle between Gemini and Qwen in the control panel
 
 ## IV. Build & Run
 
 Requirements: Xcode 16.2+, visionOS SDK, Apple Enterprise Certificate (for main camera access).
 
 ```bash
-# 1. Configure Gemini API Key (see section III)
+# 1. Configure API Keys (see section III)
 cp SpatialYOLO/Config.plist.example SpatialYOLO/Config.plist
 
 # 2. Open project in Xcode

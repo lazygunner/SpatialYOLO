@@ -94,8 +94,16 @@ public class AppModel: ObservableObject {
         set { requestsLeft = newValue }
     }
 
-    // MARK: - Gemini Live
-    var geminiService = GeminiLiveService(apiKey: Self.loadGeminiAPIKey())
+    // MARK: - AI 服务
+    var activeProvider: AIProvider = .qwen
+    var geminiService = GeminiLiveService(apiKey: AppModel.loadGeminiAPIKey())
+    var qwenService = QwenOmniService(apiKey: AppModel.loadQwenAPIKey())
+    var activeService: any RealtimeAIService {
+        switch activeProvider {
+        case .gemini: return geminiService
+        case .qwen: return qwenService
+        }
+    }
     var isGeminiActive: Bool = false
     var userInputText: String = ""
     private var lastGeminiSendTime = Date.distantPast
@@ -135,6 +143,19 @@ public class AppModel: ObservableObject {
               let apiKey = dict["GEMINI_API_KEY"] as? String,
               apiKey != "YOUR_API_KEY_HERE" else {
             print("警告: 未找到有效的 Gemini API Key，请在 Config.plist 中配置 GEMINI_API_KEY")
+            return ""
+        }
+        return apiKey
+    }
+
+    /// 从 Config.plist 读取 Qwen API Key
+    private static func loadQwenAPIKey() -> String {
+        guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
+              let data = try? Data(contentsOf: url),
+              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let apiKey = dict["QWEN_API_KEY"] as? String,
+              apiKey != "YOUR_API_KEY_HERE" else {
+            print("警告: 未找到有效的 Qwen API Key，请在 Config.plist 中配置 QWEN_API_KEY")
             return ""
         }
         return apiKey

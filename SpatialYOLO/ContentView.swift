@@ -58,12 +58,12 @@ struct ContentView: View {
                     await launchFeature(.spatialYOLO)
                 }
 
-                // Gemini Live 卡片
+                // AI Live 卡片（支持 Gemini / Qwen）
                 FeatureCard(
                     icon: "sparkles",
-                    title: "Gemini Live",
-                    subtitle: "AI 交互视觉助手",
-                    description: "实时画面流式传输至 Gemini，语音+文字智能问答",
+                    title: "AI Live",
+                    subtitle: "交互式视觉助手",
+                    description: "实时画面+语音双向对话，支持 Gemini / Qwen 切换",
                     gradient: LinearGradient(
                         colors: [
                             Color.purple.opacity(0.6),
@@ -90,7 +90,7 @@ struct ContentView: View {
                         .fill(.green)
                         .frame(width: 8, height: 8)
                     Text(appModel.activeFeature == .spatialYOLO
-                         ? "Spatial YOLO 运行中" : "Gemini Live 运行中")
+                         ? "Spatial YOLO 运行中" : "AI Live 运行中")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

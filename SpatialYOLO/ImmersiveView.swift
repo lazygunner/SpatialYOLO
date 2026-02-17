@@ -56,8 +56,8 @@ struct ImmersiveView: View {
                     ZStack(alignment: .bottom) {
                         DualCameraView(model: appModel, isLeft: true)
 
-                        // Gemini 回复字幕（打字机效果，底部 20% 区域）
-                        GeminiSubtitleOverlay(geminiService: appModel.geminiService)
+                        // AI 回复字幕（打字机效果，底部 20% 区域）
+                        GeminiSubtitleOverlay(geminiService: appModel.activeService)
                     }
 
                     // 控制面板（视频正下方）

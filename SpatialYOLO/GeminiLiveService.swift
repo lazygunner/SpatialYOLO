@@ -13,18 +13,11 @@ import UIKit
 /// Gemini Live API WebSocket 通信服务
 /// 管理与 Gemini 的实时双向通信，包括视频帧发送、文字/音频响应接收
 @Observable
-class GeminiLiveService {
+class GeminiLiveService: RealtimeAIService {
 
     // MARK: - 连接状态
 
-    enum ConnectionState: Equatable {
-        case disconnected
-        case connecting
-        case connected
-        case error(String)
-    }
-
-    var connectionState: ConnectionState = .disconnected
+    var connectionState: AIConnectionState = .disconnected
 
     // MARK: - 响应数据
 

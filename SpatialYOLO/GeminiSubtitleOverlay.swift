@@ -11,7 +11,7 @@ import SwiftUI
 /// 以打字机效果逐字显示在视频画面底部，高度不超过视频区域 20%，宽度不超过 80%
 /// 历史字幕持续保留，新回复 append 到后面，始终滚动到最新内容
 struct GeminiSubtitleOverlay: View {
-    let geminiService: GeminiLiveService
+    let geminiService: any RealtimeAIService
 
     /// 视频区域尺寸（DualCameraView 固定 960x540）
     private let videoWidth: CGFloat = 960

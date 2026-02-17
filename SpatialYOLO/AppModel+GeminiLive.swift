@@ -11,20 +11,20 @@ import UIKit
 
 extension AppModel {
 
-    /// 启动 Gemini Live 会话
+    /// 启动 AI Live 会话
     func startGeminiSession() {
         guard !isGeminiActive else { return }
         isGeminiActive = true
-        geminiService.connect()
+        activeService.connect()
     }
 
-    /// 停止 Gemini Live 会话
+    /// 停止 AI Live 会话
     func stopGeminiSession() {
         isGeminiActive = false
-        geminiService.disconnect()
+        activeService.disconnect()
     }
 
-    /// 切换 Gemini Live 会话状态
+    /// 切换 AI Live 会话状态
     func toggleGeminiSession() {
         if isGeminiActive {
             stopGeminiSession()
@@ -33,15 +33,23 @@ extension AppModel {
         }
     }
 
-    /// 将摄像头帧发送给 Gemini（1fps 采样，在帧循环中调用）
+    /// 切换 AI 服务提供商（需要先断开当前会话）
+    func switchProvider(to provider: AIProvider) {
+        if isGeminiActive {
+            stopGeminiSession()
+        }
+        activeProvider = provider
+    }
+
+    /// 将摄像头帧发送给 AI 服务（1fps 采样，在帧循环中调用）
     /// 压缩和发送在后台线程执行，不阻塞主线程帧循环
     func sendFrameToGemini(_ pixelBuffer: CVPixelBuffer) {
         guard isGeminiActive,
-              geminiService.connectionState == .connected else { return }
+              activeService.connectionState == .connected else { return }
 
         // CIImage 是轻量惰性对象，主线程创建安全且会 retain pixelBuffer
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let service = self.geminiService
+        let service = self.activeService
 
         // 重型压缩工作放到后台线程
         Task.detached {
@@ -81,9 +89,9 @@ extension AppModel {
     func sendUserQuestion(_ text: String) {
         guard !text.isEmpty,
               isGeminiActive,
-              geminiService.connectionState == .connected else { return }
+              activeService.connectionState == .connected else { return }
 
-        geminiService.sendTextMessage(text)
+        activeService.sendTextMessage(text)
         userInputText = ""
     }
 

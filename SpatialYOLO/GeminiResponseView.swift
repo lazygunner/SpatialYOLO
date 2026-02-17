@@ -7,10 +7,14 @@
 
 import SwiftUI
 
-/// Gemini Live 控制面板
-/// 连接状态、会话倒计时、用户文字输入、启停控制
+/// AI Live 控制面板
+/// 连接状态、会话倒计时、服务商切换、用户文字输入、启停控制
 struct GeminiResponseView: View {
     @Bindable var appModel: AppModel
+
+    private var service: any RealtimeAIService {
+        appModel.activeService
+    }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -26,12 +30,27 @@ struct GeminiResponseView: View {
 
                 Spacer()
 
+                // 服务商切换
+                Picker("", selection: Binding(
+                    get: { appModel.activeProvider },
+                    set: { appModel.switchProvider(to: $0) }
+                )) {
+                    ForEach(AIProvider.allCases, id: \.self) { provider in
+                        Text(provider.rawValue).tag(provider)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 160)
+                .disabled(appModel.isGeminiActive)
+
+                Spacer()
+
                 // 会话倒计时
                 if appModel.isGeminiActive {
                     Text(formattedRemainingTime)
                         .font(.caption.monospacedDigit())
                         .foregroundColor(
-                            appModel.geminiService.sessionRemainingSeconds <= 30
+                            service.sessionRemainingSeconds <= 30
                             ? .red : .secondary
                         )
                 }
@@ -42,7 +61,7 @@ struct GeminiResponseView: View {
 
             // 状态提示
             if appModel.isGeminiActive {
-                if appModel.geminiService.isModelSpeaking {
+                if service.isModelSpeaking {
                     HStack(spacing: 6) {
                         ProgressView()
                             .scaleEffect(0.6)
@@ -57,7 +76,7 @@ struct GeminiResponseView: View {
                         .italic()
                 }
             } else {
-                Text("点击下方按钮启动 Gemini 助手")
+                Text("点击下方按钮启动 \(appModel.activeProvider.rawValue) 助手")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .italic()
@@ -75,7 +94,7 @@ struct GeminiResponseView: View {
                         appModel.sendUserQuestion(appModel.userInputText)
                     }
                     .disabled(!appModel.isGeminiActive
-                              || appModel.geminiService.connectionState != .connected)
+                              || service.connectionState != .connected)
 
                 Button {
                     appModel.sendUserQuestion(appModel.userInputText)
@@ -84,7 +103,7 @@ struct GeminiResponseView: View {
                 }
                 .disabled(appModel.userInputText.isEmpty
                           || !appModel.isGeminiActive
-                          || appModel.geminiService.connectionState != .connected)
+                          || service.connectionState != .connected)
             }
             .padding(.horizontal, 12)
 
@@ -130,19 +149,18 @@ struct GeminiResponseView: View {
     // MARK: - Computed Properties
 
     private var showRetryButton: Bool {
-        switch appModel.geminiService.connectionState {
+        switch service.connectionState {
         case .error:
             return true
         case .disconnected:
-            // 会话超时后自动断开的情况
-            return appModel.geminiService.sessionRemainingSeconds <= 0
+            return service.sessionRemainingSeconds <= 0
         default:
             return false
         }
     }
 
     private var statusColor: Color {
-        switch appModel.geminiService.connectionState {
+        switch service.connectionState {
         case .connected: return .green
         case .connecting: return .yellow
         case .disconnected: return .gray
@@ -151,8 +169,8 @@ struct GeminiResponseView: View {
     }
 
     private var statusText: String {
-        switch appModel.geminiService.connectionState {
-        case .connected: return "已连接"
+        switch service.connectionState {
+        case .connected: return "\(appModel.activeProvider.rawValue) 已连接"
         case .connecting: return "连接中..."
         case .disconnected: return "未连接"
         case .error(let msg): return "错误: \(msg)"
@@ -160,8 +178,9 @@ struct GeminiResponseView: View {
     }
 
     private var formattedRemainingTime: String {
-        let minutes = appModel.geminiService.sessionRemainingSeconds / 60
-        let seconds = appModel.geminiService.sessionRemainingSeconds % 60
+        let total = service.sessionRemainingSeconds
+        let minutes = total / 60
+        let seconds = total % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
 }
