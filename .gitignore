@@ -3,4 +3,4 @@ Enterprise.license
 *.license
 Build/
 Enterprise-1.license
-*.mlpackage
+Config.plist

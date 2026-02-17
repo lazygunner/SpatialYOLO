@@ -95,7 +95,7 @@ public class AppModel: ObservableObject {
     }
 
     // MARK: - Gemini Live
-    var geminiService = GeminiLiveService(apiKey: "YOUR_API_KEY_HERE")
+    var geminiService = GeminiLiveService(apiKey: Self.loadGeminiAPIKey())
     var isGeminiActive: Bool = false
     var userInputText: String = ""
     private var lastGeminiSendTime = Date.distantPast
@@ -125,6 +125,19 @@ public class AppModel: ObservableObject {
             print("主摄像头访问未获批准")
             isCameraEntitled = false
         }
+    }
+
+    /// 从 Config.plist 读取 Gemini API Key
+    private static func loadGeminiAPIKey() -> String {
+        guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
+              let data = try? Data(contentsOf: url),
+              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let apiKey = dict["GEMINI_API_KEY"] as? String,
+              apiKey != "YOUR_API_KEY_HERE" else {
+            print("警告: 未找到有效的 Gemini API Key，请在 Config.plist 中配置 GEMINI_API_KEY")
+            return ""
+        }
+        return apiKey
     }
 
     // 初始化深度模型

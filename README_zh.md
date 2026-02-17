@@ -1,38 +1,89 @@
 [English](README.md) | [中文](README_zh.md)
 
-## 一、生成coreml支持的Yolo模型
-### 1.安装ultralytics
-如果没有安装过 ultralytics 库的同学先通过命令安装
+# SpatialYOLO
+
+Apple Vision Pro 上的实时物体检测与 AI 视觉助手。
+
+- **Spatial YOLO** — 双目摄像头 + YOLOv11n 物体检测 + 立体深度估计
+- **Gemini Live** — 基于 Google Gemini Live API 的交互式 AI 助手，支持实时视频 + 语音对话
+
+## 一、生成 CoreML 支持的 YOLO 模型
+### 1. 安装 ultralytics
+如果没有安装过 ultralytics 库，先通过命令安装
 ```
 pip install ultralytics
 ```
-### 2.选择模型
+### 2. 选择模型
 ![](doc/1.png)
 
 这里我们选择 yolo11n，因为模型体积小速度快。
-### 3.导出coreml支持的格式
+### 3. 导出 CoreML 支持的格式
 ```
 yolo export model=yolo11n.pt format=coreml nms=true
 ```
 ![](doc/2.png)
-### 4.添加yolo11n.mlpackage到项目
+### 4. 添加 yolo11n.mlpackage 到项目
 ![](doc/3.png)
 
 参考文档
 https://docs.ultralytics.com/integrations/coreml/
 
-## 二、企业证书和Capability设置
-### 1.添加证书
+## 二、企业证书和 Capability 设置
+### 1. 添加证书
 ![](doc/4.png)
 
-这个证书是企业API申请成功之后，苹果通过邮件发送的
-### 2.设置Capability
+这个证书是企业 API 申请成功之后，苹果通过邮件发送的
+### 2. 设置 Capability
 ![](doc/5.png)
 
-在Signing & Capabilities页面，点击 + Capability 这个按钮，会弹出一个搜索界面，我们搜索 Main Camera Acces，然后双击添加到项目中。
+在 Signing & Capabilities 页面，点击 + Capability 按钮，会弹出一个搜索界面，搜索 Main Camera Access，然后双击添加到项目中。
 
 ![](doc/6.png)
 
-之后就会出现一个黄色图标的entitlement文件
+之后就会出现一个黄色图标的 entitlement 文件
 
 ![](doc/7.png)
+
+## 三、Gemini Live API 配置
+
+### 1. 获取 API Key
+从 [Google AI Studio](https://aistudio.google.com/) 获取 Gemini API Key。
+
+### 2. 配置 API Key
+```bash
+# 复制模板配置文件
+cp SpatialYOLO/Config.plist.example SpatialYOLO/Config.plist
+```
+
+编辑 `SpatialYOLO/Config.plist`，将 `YOUR_API_KEY_HERE` 替换为你的 Gemini API Key：
+```xml
+<key>GEMINI_API_KEY</key>
+<string>你的实际api-key</string>
+```
+
+### 3. 将 Config.plist 添加到 Xcode 项目
+将 `Config.plist` 添加到 Xcode 项目的 target build resources 中，以便运行时通过 `Bundle.main` 读取。
+
+> **注意：** `Config.plist` 已加入 `.gitignore`，不会被提交到代码仓库。
+
+### 4. Gemini Live 功能
+- **实时视频：** 摄像头画面以 1fps 采样，JPEG 压缩（最大 1024px），通过 WebSocket 发送
+- **语音输入：** 麦克风音频以 16kHz PCM 采集，实时发送
+- **语音回复：** Gemini 以 24kHz PCM 音频回复，通过 AVAudioEngine 播放
+- **字幕：** AI 回复文字以打字机效果叠加显示在视频画面上
+- **模型：** `gemini-2.5-flash-native-audio-preview-12-2025`（Native Audio）
+- **会话时长：** 视频 + 音频会话约 2 分钟
+
+## 四、构建与运行
+
+环境要求：Xcode 16.2+、visionOS SDK、Apple 企业证书（用于主摄像头访问）。
+
+```bash
+# 1. 配置 Gemini API Key（参见第三节）
+cp SpatialYOLO/Config.plist.example SpatialYOLO/Config.plist
+
+# 2. 用 Xcode 打开项目
+open SpatialYOLO.xcodeproj
+
+# 3. 选择 visionOS 设备并运行
+```
