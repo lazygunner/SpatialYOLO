@@ -129,6 +129,8 @@ class GeminiLiveService {
 
         connectionState = .disconnected
         isModelSpeaking = false
+        responseText = ""
+        responseHistory = []
         sessionStartTime = nil
         sessionRemainingSeconds = 120
         framesSent = 0
@@ -208,10 +210,11 @@ class GeminiLiveService {
                         ]
                     ]
                 ],
+                "outputAudioTranscription": [:],
                 "systemInstruction": [
                     "parts": [
                         [
-                            "text": "你是一个空间视觉助手，正在通过 Apple Vision Pro 的摄像头观察周围环境。用户会向你提问关于他们看到的内容。请用简洁的中文回答。基于你观察到的画面内容来回应用户。"
+                            "text": "你是一个空间视觉助手，正在通过 Apple Vision Pro 的摄像头观察周围环境。你必须始终使用中文回答，禁止使用英文或其他语言。用简洁的中文描述你观察到的画面内容，并回应用户的提问。"
                         ]
                     ]
                 ]
@@ -311,6 +314,9 @@ class GeminiLiveService {
 
         // 处理 serverContent
         if let serverContent = json["serverContent"] as? [String: Any] {
+            // 打印 serverContent 的所有顶层 key
+            let contentKeys = serverContent.keys.sorted().joined(separator: ", ")
+            print("[GeminiLive] serverContent keys: [\(contentKeys)]")
             handleServerContent(serverContent)
             return
         }
@@ -321,6 +327,10 @@ class GeminiLiveService {
             disconnect()
             return
         }
+
+        // 打印未识别的顶层消息类型
+        let topKeys = json.keys.sorted().joined(separator: ", ")
+        print("[GeminiLive] 未识别消息 keys: [\(topKeys)]")
     }
 
     /// 处理 serverContent 响应
@@ -331,20 +341,28 @@ class GeminiLiveService {
            let parts = modelTurn["parts"] as? [[String: Any]] {
 
             for part in parts {
-                // 文字响应
+                // 文字响应（包含 thought）
                 if let text = part["text"] as? String {
                     responseText += text
                     isModelSpeaking = true
-                    print("[GeminiLive] 收到文字: \(text.prefix(80))...")
+                    print("[GeminiLive] 收到 text: \(text.prefix(100))")
                 }
 
-                // 音频响应
+                // 音频转录
+                if let transcript = part["transcript"] as? String {
+                    responseText += transcript
+                    isModelSpeaking = true
+                    print("[GeminiLive] 收到 transcript: \(transcript.prefix(100))")
+                }
+
+                // 音频数据
                 if let inlineData = part["inlineData"] as? [String: Any],
                    let mimeType = inlineData["mimeType"] as? String,
-                   mimeType.hasPrefix("audio/"),
-                   let base64Audio = inlineData["data"] as? String,
-                   let audioData = Data(base64Encoded: base64Audio) {
-                    playAudioData(audioData)
+                   mimeType.hasPrefix("audio/") {
+                    if let base64Audio = inlineData["data"] as? String,
+                       let audioData = Data(base64Encoded: base64Audio) {
+                        playAudioData(audioData)
+                    }
                 }
             }
         }
@@ -352,20 +370,18 @@ class GeminiLiveService {
         // 检查 turnComplete
         if let turnComplete = content["turnComplete"] as? Bool, turnComplete {
             isModelSpeaking = false
-            print("[GeminiLive] 回合完成")
-            // 保存到历史
+            print("[GeminiLive] 回合完成, responseText长度: \(responseText.count)")
+            // 不清空 responseText，历史字幕持续保留
+            // 添加换行分隔符，后续回复 append 到后面
             if !responseText.isEmpty {
-                responseHistory.append(responseText)
-                // 保留最近 20 条
-                if responseHistory.count > 20 {
-                    responseHistory.removeFirst()
-                }
+                responseText += "\n"
             }
         }
 
         // 检查是否被中断
         if let interrupted = content["interrupted"] as? Bool, interrupted {
             isModelSpeaking = false
+            print("[GeminiLive] 被中断")
         }
     }
 
@@ -532,6 +548,44 @@ class GeminiLiveService {
         }
 
         player.scheduleBuffer(buffer, completionHandler: nil)
+    }
+
+    // MARK: - 中文文字提取
+
+    /// 从 thought 文本中提取中文字符和标点，过滤英文推理内容
+    static func extractChinese(from text: String) -> String {
+        var result = ""
+        var inChineseRun = false
+
+        for char in text {
+            if char.isChinese {
+                result.append(char)
+                inChineseRun = true
+            } else if inChineseRun && (char == " " || char == "\n") {
+                // 中文段落内的空格/换行保留
+                result.append(char)
+            } else {
+                inChineseRun = false
+            }
+        }
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+// MARK: - Character 中文判断
+
+private extension Character {
+    /// 是否为中文字符或中文标点
+    var isChinese: Bool {
+        guard let scalar = unicodeScalars.first else { return false }
+        let v = scalar.value
+        return (0x4E00...0x9FFF).contains(v)   // CJK 基本
+            || (0x3400...0x4DBF).contains(v)   // CJK 扩展 A
+            || (0xF900...0xFAFF).contains(v)   // CJK 兼容
+            || (0x3000...0x303F).contains(v)   // CJK 标点
+            || (0xFF01...0xFF5E).contains(v)   // 全角字符
+            || "，。！？、：；\u{201C}\u{201D}\u{2018}\u{2019}（）「」【】—…·".contains(self)
     }
 }
 

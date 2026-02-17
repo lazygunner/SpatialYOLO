@@ -15,7 +15,6 @@ struct ImmersiveView: View {
     @State private var leftCameraEntity: Entity?
     @State private var rightCameraEntity: Entity?
     @State private var depthEntity: Entity?
-    @State private var geminiEntity: Entity?
     @State private var geminiBoundingBoxEntity: Entity?
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
@@ -51,16 +50,21 @@ struct ImmersiveView: View {
                 }
             }
 
-            // Gemini Live 附件
+            // Gemini Live 附件：摄像头画面 + 字幕叠加 + 控制面板
             Attachment(id: "geminiBoundingBox") {
-                VStack {
-                    DualCameraView(model: appModel, isLeft: true)
+                VStack(spacing: 8) {
+                    ZStack(alignment: .bottom) {
+                        DualCameraView(model: appModel, isLeft: true)
+
+                        // Gemini 回复字幕（打字机效果，底部 20% 区域）
+                        GeminiSubtitleOverlay(geminiService: appModel.geminiService)
+                    }
+
+                    // 控制面板（视频正下方）
+                    GeminiResponseView(appModel: appModel)
+
                     exitButton
                 }
-            }
-
-            Attachment(id: "geminiResponse") {
-                GeminiResponseView(appModel: appModel)
             }
         }
         .task {
@@ -102,20 +106,11 @@ struct ImmersiveView: View {
     // MARK: - Gemini Live 布局
 
     private func setupGeminiLive(anchor: AnchorEntity, attachments: RealityViewAttachments) {
-        // 摄像头画面 + 边界框（左侧）
+        // 摄像头画面 + 字幕 + 控制面板（居中）
         if let attachment = attachments.entity(for: "geminiBoundingBox") {
             geminiBoundingBoxEntity = attachment
-            attachment.position = SIMD3<Float>(-0.15, -0.05, -0.5)
-            attachment.transform.rotation = simd_quatf(angle: .pi / 15, axis: [0, 1, 0])
-            attachment.transform.scale = [0.4, 0.4, 0.4]
-            anchor.addChild(attachment)
-        }
-
-        // Gemini 响应面板（右侧）
-        if let attachment = attachments.entity(for: "geminiResponse") {
-            geminiEntity = attachment
-            attachment.position = SIMD3<Float>(0.2, -0.05, -0.5)
-            attachment.transform.rotation = simd_quatf(angle: -.pi / 15, axis: [0, 1, 0])
+            attachment.position = SIMD3<Float>(-0.2, -0.05, -0.5)
+            attachment.transform.rotation = simd_quatf(angle: .pi / 8, axis: [0, 1, 0])
             attachment.transform.scale = [0.4, 0.4, 0.4]
             anchor.addChild(attachment)
         }
