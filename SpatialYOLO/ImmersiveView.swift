@@ -16,6 +16,7 @@ struct ImmersiveView: View {
     @State private var rightCameraEntity: Entity?
     @State private var depthEntity: Entity?
     @State private var geminiBoundingBoxEntity: Entity?
+    @State private var mahjongEntity: Entity?
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
 
@@ -29,6 +30,8 @@ struct ImmersiveView: View {
                 setupSpatialYOLO(anchor: anchor, attachments: attachments)
             case .geminiLive:
                 setupGeminiLive(anchor: anchor, attachments: attachments)
+            case .mahjong:
+                setupMahjong(anchor: anchor, attachments: attachments)
             }
 
             content.add(anchor)
@@ -46,6 +49,32 @@ struct ImmersiveView: View {
             Attachment(id: "rightCameraView") {
                 VStack {
                     DualCameraView(model: appModel, isLeft: false)
+                    exitButton
+                }
+            }
+
+            // 麻将检测附件：牌型栏（常驻）+ 可折叠区域
+            Attachment(id: "mahjongView") {
+                VStack(spacing: 6) {
+                    // 牌型展示 + 分析按钮 + 收起/展开按钮（始终可见）
+                    MahjongTileBar(model: appModel)
+
+                    // 可折叠区域：摄像头 + 打牌记录 + 分析结果 + 语音控制面板
+                    if appModel.mahjongPanelExpanded {
+                        ZStack(alignment: .bottom) {
+                            MahjongDetectionView(model: appModel)
+
+                            // Omni 语音监听字幕（打牌事件识别）
+                            GeminiSubtitleOverlay(geminiService: appModel.activeService)
+                        }
+
+                        // 其他玩家打牌记录
+                        MahjongDiscardRecordView(model: appModel)
+
+                        // AI 语音控制面板（Omni 连接/断开）
+                        GeminiResponseView(appModel: appModel)
+                    }
+
                     exitButton
                 }
             }
@@ -111,6 +140,19 @@ struct ImmersiveView: View {
             geminiBoundingBoxEntity = attachment
             attachment.position = SIMD3<Float>(-0.2, -0.05, -0.5)
             attachment.transform.rotation = simd_quatf(angle: .pi / 8, axis: [0, 1, 0])
+            attachment.transform.scale = [0.4, 0.4, 0.4]
+            anchor.addChild(attachment)
+        }
+    }
+
+    // MARK: - 麻将检测布局
+
+    private func setupMahjong(anchor: AnchorEntity, attachments: RealityViewAttachments) {
+        // 摄像头 + 牌型栏 + 控制面板（正前方居中，无旋转）
+        if let attachment = attachments.entity(for: "mahjongView") {
+            mahjongEntity = attachment
+            attachment.position = SIMD3<Float>(0, 0.0, -0.6)
+            attachment.transform.rotation = simd_quatf(angle: 0, axis: [0, 1, 0])
             attachment.transform.scale = [0.4, 0.4, 0.4]
             anchor.addChild(attachment)
         }

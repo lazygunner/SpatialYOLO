@@ -30,6 +30,7 @@ public class AppModel: ObservableObject {
     enum FeatureMode {
         case spatialYOLO    // 双目 YOLO 检测 + 深度估计
         case geminiLive     // Gemini Live 交互助手
+        case mahjong        // 麻将牌检测 + AI 助手
     }
     var activeFeature: FeatureMode = .spatialYOLO
 
@@ -40,6 +41,7 @@ public class AppModel: ObservableObject {
 
     // 左摄像头相关
     var capturedImageLeft: UIImage?
+    var cameraImageSize: CGSize = .zero  // 摄像头原始分辨率（用于坐标换算）
     private var pixelBufferLeft: CVPixelBuffer?
     var boundingBoxesLeft: [CGRect] = []
     var detectedClassesLeft: [String] = []
@@ -75,6 +77,39 @@ public class AppModel: ObservableObject {
     var requestsRight = [VNRequest]()
     var bufferSize: CGSize = .zero
     var classNames: [String] = []
+
+    // 麻将检测相关（单一数组避免并行数组竞态）
+    struct MahjongTile: Identifiable {
+        let id = UUID()
+        let box: CGRect        // Vision 归一化坐标
+        let className: String  // 中文显示名（一条、二万...）
+        let classCode: String  // 类别编码（1B、2C...用于 emoji 映射）
+        let confidence: Float  // 置信度百分比
+    }
+    var mahjongDetections: [MahjongTile] = []   // 当前帧检测结果
+    var requestsMahjong = [VNRequest]()
+
+    // 牌局记忆
+    var mahjongGameActive: Bool = false          // 牌局是否进行中
+    var mahjongHandMemory: [String] = []         // 记忆中的手牌（类别编码，可重复）
+    /// 每张牌连续未检测到的帧数（用于判断是否被打出）
+    var mahjongAbsenceCount: [String: Int] = [:]
+    /// 连续未检测到多少帧后判定为已打出
+    let mahjongAbsenceThreshold = 15     // 约 0.5 秒 @30fps
+
+    /// 手牌状态：等待摸牌（13张上限）或等待打牌（14张上限）
+    enum MahjongHandState {
+        case waitingToDraw      // 待摸牌，最多 13 张
+        case waitingToDiscard   // 待打牌，最多 14 张
+    }
+    var mahjongHandState: MahjongHandState = .waitingToDiscard
+    var mahjongMaxHandTiles: Int { mahjongHandState == .waitingToDiscard ? 14 : 13 }
+
+    /// 控制面板是否展开（收起/展开按钮控制）
+    var mahjongPanelExpanded: Bool = true
+
+    // MARK: - 打牌记录（其他玩家）
+    var discardRecords: [PlayerDiscardRecord] = []   // 按玩家分组的打牌记录
     
     var currentIntrinsics: simd_float3x3 = simd_float3x3(.zero)
     var currentExtrinsics: simd_float4x4 = simd_float4x4(.zero)
@@ -94,6 +129,27 @@ public class AppModel: ObservableObject {
         set { requestsLeft = newValue }
     }
 
+    // MARK: - 各模式独立系统提示词
+
+    /// AI Live 模式：通用视觉助手，负责观察环境、回答问题
+    static let aiLiveSystemInstruction = """
+    你是 Apple Vision Pro 上的智能视觉助手。通过摄像头实时观察用户周围的环境。
+    你的能力：描述所见场景和物体、回答用户关于环境的问题、提供实用建议。
+    要求：始终用中文回答，语言简洁自然，不超过3句话。
+    """
+
+    /// 麻将模式：专注监听牌局动作，结构化输出打牌事件
+    static let mahjongSystemInstruction = """
+    你是麻将牌局语音监听助手，通过 Apple Vision Pro 旁听牌局。
+    核心任务：仔细听取周围玩家的声音，识别报牌和动作，区分玩家A/B/C。
+    每当检测到打牌动作，必须用以下格式逐行输出（不得省略）：
+    [玩家A] 打 三万
+    [玩家B] 碰
+    [玩家C] 杠 东风
+    [玩家A] 胡
+    规则：只输出打牌相关信息，忽略闲聊；初始静默监听，不主动发言；极简中文。
+    """
+
     // MARK: - AI 服务
     var activeProvider: AIProvider = .qwen
     var geminiService = GeminiLiveService(apiKey: AppModel.loadGeminiAPIKey())
@@ -107,6 +163,9 @@ public class AppModel: ObservableObject {
     var isGeminiActive: Bool = false
     var userInputText: String = ""
     private var lastGeminiSendTime = Date.distantPast
+
+    // MARK: - 麻将牌型分析服务（独立 LLM）
+    var mahjongAnalysisService = MahjongAnalysisService(apiKey: AppModel.loadQwenAPIKey())
 
     // MARK: - 企业许可证
     var isLicenseValid: Bool = false
@@ -400,12 +459,33 @@ public class AppModel: ObservableObject {
                 self.pixelBufferLeft = leftSample[0].pixelBuffer
                 self.capturedImageLeft = self.convertToUIImage(pixelBuffer: self.pixelBufferLeft)
 
-                // YOLO 检测放到后台线程，不阻塞主线程帧循环和 UI 交互
-                let leftBuffer = self.pixelBufferLeft!
-                let leftRequests = self.requestsLeft
-                Task.detached {
-                    let handler = VNImageRequestHandler(cvPixelBuffer: leftBuffer)
-                    try? handler.perform(leftRequests)
+                // 记录摄像头分辨率（用于麻将检测坐标换算）
+                if let pb = self.pixelBufferLeft {
+                    let w = CVPixelBufferGetWidth(pb)
+                    let h = CVPixelBufferGetHeight(pb)
+                    if self.cameraImageSize == .zero {
+                        self.cameraImageSize = CGSize(width: w, height: h)
+                    }
+                }
+
+                // Spatial YOLO / AI Live 模式：左摄像头 yolo11n 检测
+                if activeFeature == .spatialYOLO || activeFeature == .geminiLive {
+                    let leftBuffer = self.pixelBufferLeft!
+                    let leftRequests = self.requestsLeft
+                    Task.detached {
+                        let handler = VNImageRequestHandler(cvPixelBuffer: leftBuffer)
+                        try? handler.perform(leftRequests)
+                    }
+                }
+
+                // 麻将模式：麻将牌 YOLO 检测
+                if activeFeature == .mahjong {
+                    let leftBuffer = self.pixelBufferLeft!
+                    let mahjongRequests = self.requestsMahjong
+                    Task.detached {
+                        let handler = VNImageRequestHandler(cvPixelBuffer: leftBuffer)
+                        try? handler.perform(mahjongRequests)
+                    }
                 }
             }
 
@@ -429,11 +509,15 @@ public class AppModel: ObservableObject {
                 }
             }
 
-            // Gemini Live 模式：每 1 秒采样一帧发送（使用左摄像头）
-            if activeFeature == .geminiLive, isGeminiActive, let leftBuffer = self.pixelBufferLeft {
+            // Gemini Live / 麻将模式：定时采样帧发送给 AI 服务
+            // geminiLive: 2 秒/帧，mahjong: 5 秒/帧（麻将牌静止，降低带宽）
+            if (activeFeature == .geminiLive || activeFeature == .mahjong),
+               isGeminiActive, let leftBuffer = self.pixelBufferLeft {
+                let frameInterval: TimeInterval = (activeFeature == .mahjong) ? 5.0 : 2.0
                 let timeSinceLastGemini = currentTime.timeIntervalSince(lastGeminiSendTime)
-                if timeSinceLastGemini >= 1.0 {
+                if timeSinceLastGemini >= frameInterval {
                     lastGeminiSendTime = currentTime
+                    print("[帧采样] 发送视频帧 (间隔\(Int(frameInterval))s, 模式:\(activeFeature))")
                     sendFrameToGemini(leftBuffer)
                 }
             }

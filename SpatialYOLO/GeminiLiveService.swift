@@ -30,6 +30,10 @@ class GeminiLiveService: RealtimeAIService {
     var sessionStartTime: Date?
     var sessionRemainingSeconds: Int = 120  // 2分钟会话限制
 
+    // MARK: - 系统提示词（由外部注入，各模式独立）
+
+    var systemInstruction: String = ""
+
     // MARK: - Private
 
     private let apiKey: String
@@ -161,8 +165,12 @@ class GeminiLiveService: RealtimeAIService {
 
     /// 发送用户文字消息
     func sendTextMessage(_ text: String) {
-        guard connectionState == .connected else { return }
-        print("[GeminiLive] 发送用户消息: \(text)")
+        guard connectionState == .connected else {
+            print("[GeminiLive] 发送失败: 连接未就绪 (state=\(connectionState))")
+            return
+        }
+        let timestamp = String(format: "%.3f", Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 1000))
+        print("[GeminiLive] [\(timestamp)] 发送用户消息(\(text.count)字): \(text.prefix(80))")
 
         let message: [String: Any] = [
             "clientContent": [
@@ -187,9 +195,12 @@ class GeminiLiveService: RealtimeAIService {
 
     // MARK: - Private 方法
 
-    /// 发送 setup 配置消息
+    /// 发送 setup 配置消息（使用外部注入的 systemInstruction）
     private func sendSetupMessage() {
         print("[GeminiLive] 发送 setup 消息 (model: \(model))...")
+        let instruction = systemInstruction.isEmpty
+            ? "你是 Apple Vision Pro 上的智能助手，请用中文简洁回答。"
+            : systemInstruction
         let setupMessage: [String: Any] = [
             "setup": [
                 "model": model,
@@ -206,9 +217,7 @@ class GeminiLiveService: RealtimeAIService {
                 "outputAudioTranscription": [:],
                 "systemInstruction": [
                     "parts": [
-                        [
-                            "text": "你是一个空间视觉助手，正在通过 Apple Vision Pro 的摄像头观察周围环境。你必须始终使用中文回答，禁止使用英文或其他语言。用简洁的中文描述你观察到的画面内容，并回应用户的提问。"
-                        ]
+                        ["text": instruction]
                     ]
                 ]
             ]

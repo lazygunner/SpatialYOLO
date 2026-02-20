@@ -78,6 +78,27 @@ struct ContentView: View {
                 ) {
                     await launchFeature(.geminiLive)
                 }
+
+                // 麻将牌检测 + AI 助手
+                FeatureCard(
+                    icon: "rectangle.split.3x3",
+                    title: "Mahjong AI",
+                    subtitle: "麻将牌识别 + AI 助手",
+                    description: "实时检测麻将牌面，结合 AI 语音分析牌局",
+                    gradient: LinearGradient(
+                        colors: [
+                            Color.green.opacity(0.6),
+                            Color.teal.opacity(0.4)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    isActive: appModel.immersiveSpaceState == .open
+                        && appModel.activeFeature == .mahjong,
+                    isDisabled: appModel.immersiveSpaceState == .inTransition
+                ) {
+                    await launchFeature(.mahjong)
+                }
             }
             .padding(.horizontal, 30)
 
@@ -89,15 +110,20 @@ struct ContentView: View {
                     Circle()
                         .fill(.green)
                         .frame(width: 8, height: 8)
-                    Text(appModel.activeFeature == .spatialYOLO
-                         ? "Spatial YOLO 运行中" : "AI Live 运行中")
+                    Text({
+                        switch appModel.activeFeature {
+                        case .spatialYOLO: return "Spatial YOLO 运行中"
+                        case .geminiLive: return "AI Live 运行中"
+                        case .mahjong: return "Mahjong AI 运行中"
+                        }
+                    }())
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .padding(.bottom, 20)
             }
         }
-        .frame(width: 620, height: 420)
+        .frame(width: 880, height: 420)
     }
 
     // MARK: - 启动/切换功能

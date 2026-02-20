@@ -22,11 +22,21 @@ class QwenOmniService: RealtimeAIService {
     var responseText: String = ""
     var isModelSpeaking: Bool = false
 
+    /// 打牌事件回调（通知 AppModel 更新记录）
+    var onDiscardEvent: ((DiscardEvent) -> Void)?
+
+    /// 累积的当前回合完整转录文本（用于打牌事件解析）
+    private var currentTurnTranscript: String = ""
+
     // MARK: - 会话管理
 
     var sessionStartTime: Date?
     var sessionRemainingSeconds: Int = 7200  // 120分钟
     var framesSent: Int = 0
+
+    // MARK: - 系统提示词（由外部注入，各模式独立）
+
+    var systemInstruction: String = ""
 
     // MARK: - Private
 
@@ -156,23 +166,26 @@ class QwenOmniService: RealtimeAIService {
     }
 
     func sendTextMessage(_ text: String) {
-        guard connectionState == .connected else { return }
-        print("[QwenOmni] 发送用户消息: \(text)")
+        guard connectionState == .connected else {
+            print("[QwenOmni] 发送失败: 连接未就绪 (state=\(connectionState))")
+            return
+        }
+        let timestamp = String(format: "%.3f", Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 1000))
+        print("[QwenOmni] [\(timestamp)] 发送用户消息(\(text.count)字): \(text.prefix(80))")
 
-        // 打断当前播放
+        // 打断当前播放（仅在模型正在回复时）
         if isModelSpeaking {
             audioPlayerNode?.stop()
             audioPlayerNode?.play()
             isModelSpeaking = false
+            sendJSON(["type": "response.cancel"])
         }
 
-        // 取消服务端正在生成的响应
-        sendJSON(["type": "response.cancel"])
-
-        // 清空当前响应，准备接收新回复
-        responseText = ""
+        // 清空音频缓冲区，防止 VAD 在响应生成期间误检测"说话"导致打断
+        sendJSON(["type": "input_audio_buffer.clear"])
 
         // Qwen 使用 conversation.item.create + response.create
+        // 必须顺序发送：先等 item.create 成功再发 response.create
         let itemMessage: [String: Any] = [
             "type": "conversation.item.create",
             "item": [
@@ -186,13 +199,17 @@ class QwenOmniService: RealtimeAIService {
                 ]
             ]
         ]
-        sendJSON(itemMessage)
-
-        // 触发响应
-        let responseMessage: [String: Any] = [
-            "type": "response.create"
-        ]
-        sendJSON(responseMessage)
+        sendJSON(itemMessage) { [weak self] in
+            guard let self = self else { return }
+            // item.create 发送完毕后再触发响应
+            let responseMessage: [String: Any] = [
+                "type": "response.create",
+                "response": [
+                    "modalities": ["text", "audio"]
+                ]
+            ]
+            self.sendJSON(responseMessage)
+        }
 
         isModelSpeaking = true
     }
@@ -201,14 +218,17 @@ class QwenOmniService: RealtimeAIService {
 
     private func sendSessionUpdate() {
         print("[QwenOmni] 发送 session.update...")
+        let instruction = systemInstruction.isEmpty
+            ? "你是 Apple Vision Pro 上的智能助手，请用中文简洁回答。"
+            : systemInstruction
         let message: [String: Any] = [
             "type": "session.update",
             "session": [
                 "modalities": ["text", "audio"],
-                "voice": "Katerina",
+                "voice": "Cherry",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm24",
-                "instructions": "你是 Apple Vision Pro 上的空间视觉助手，通过摄像头观察环境。回答要求：1）用中文；2）极简风格，每次回复不超过3句话；3）直接说重点，不要寒暄和废话。",
+                "instructions": instruction,
                 "turn_detection": [
                     "type": "server_vad",
                     "threshold": 0.5,
@@ -220,28 +240,42 @@ class QwenOmniService: RealtimeAIService {
         sendJSON(message)
     }
 
-    private func sendJSON(_ dict: [String: Any]) {
+    /// 发送 JSON 消息（带完成回调，用于顺序发送）
+    private func sendJSON(_ dict: [String: Any], completion: (() -> Void)? = nil) {
+        let msgType = dict["type"] as? String ?? "unknown"
+
         guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
               let jsonString = String(data: data, encoding: .utf8) else {
-            print("[QwenOmni] JSON 序列化失败")
+            print("[QwenOmni] JSON 序列化失败 (type=\(msgType))")
+            completion?()
             return
         }
 
-        if dict["type"] as? String == "session.update" {
+        // 详细打印 session.update
+        if msgType == "session.update" {
             if let prettyData = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
                let prettyString = String(data: prettyData, encoding: .utf8) {
                 print("[QwenOmni] Session Update JSON:\n\(prettyString)")
             }
         }
 
+        // 非高频消息（音频/图像除外）打印发送日志
+        let silentTypes: Set = ["input_audio_buffer.append", "input_image_buffer.append"]
+        if !silentTypes.contains(msgType) {
+            print("[QwenOmni] >>> 发送: \(msgType) (\(jsonString.count) bytes)")
+        }
+
         webSocketTask?.send(.string(jsonString)) { [weak self] error in
             if let error = error {
                 let nsError = error as NSError
-                print("[QwenOmni] 发送失败: \(nsError.localizedDescription)")
+                print("[QwenOmni] 发送失败[\(msgType)]: \(nsError.localizedDescription)")
                 DispatchQueue.main.async {
                     self?.connectionState = .error("发送失败: \(nsError.localizedDescription)")
                 }
+            } else if !silentTypes.contains(msgType) {
+                print("[QwenOmni] >>> 发送成功: \(msgType)")
             }
+            completion?()
         }
     }
 
@@ -320,6 +354,7 @@ class QwenOmniService: RealtimeAIService {
             // 音频转录（中文文字）
             if let delta = json["delta"] as? String {
                 responseText += delta
+                currentTurnTranscript += delta
                 isModelSpeaking = true
                 print("[QwenOmni] transcript: \(delta.prefix(50))")
             }
@@ -328,22 +363,59 @@ class QwenOmniService: RealtimeAIService {
             // 纯文字响应
             if let delta = json["delta"] as? String {
                 responseText += delta
+                currentTurnTranscript += delta
                 isModelSpeaking = true
                 print("[QwenOmni] text: \(delta.prefix(50))")
             }
 
+        case "response.created":
+            print("[QwenOmni] 响应已创建 (response.created) ✅")
+
+        case "response.output_item.added":
+            if let item = json["item"] as? [String: Any] {
+                let itemType = item["type"] as? String ?? "unknown"
+                print("[QwenOmni] 输出项已添加: type=\(itemType)")
+            }
+
+        case "response.output_item.done":
+            print("[QwenOmni] 输出项完成")
+
+        case "conversation.item.created":
+            if let item = json["item"] as? [String: Any] {
+                let role = item["role"] as? String ?? "unknown"
+                print("[QwenOmni] 对话项已创建: role=\(role)")
+            }
+
+        case "rate_limits.updated":
+            print("[QwenOmni] 速率限制更新")
+
         case "response.audio.done":
-            print("[QwenOmni] 音频生成完成")
+            print("[QwenOmni] 音频生成完成 ✅")
 
         case "response.audio_transcript.done":
-            print("[QwenOmni] 音频转录完成")
+            if let transcript = json["transcript"] as? String {
+                print("[QwenOmni] 音频转录完成: \(transcript.prefix(60))")
+            } else {
+                print("[QwenOmni] 音频转录完成")
+            }
 
         case "response.text.done":
-            print("[QwenOmni] 文字响应完成")
+            if let text = json["text"] as? String {
+                print("[QwenOmni] 文字响应完成: \(text.prefix(60))")
+            } else {
+                print("[QwenOmni] 文字响应完成")
+            }
 
         case "response.done":
             isModelSpeaking = false
             print("[QwenOmni] 回合完成, responseText长度: \(responseText.count)")
+
+            // 解析当前回合的转录文本，提取打牌事件
+            if !currentTurnTranscript.isEmpty {
+                parseDiscardEvents(from: currentTurnTranscript)
+                currentTurnTranscript = ""
+            }
+
             if !responseText.isEmpty {
                 responseText += "\n"
             }
@@ -541,6 +613,40 @@ class QwenOmniService: RealtimeAIService {
         }
 
         player.scheduleBuffer(buffer, completionHandler: nil)
+    }
+    // MARK: - 打牌事件解析
+
+    /// 从 Omni 的转录文本中提取结构化打牌事件
+    /// 格式: [玩家X] 打 三万 / [玩家X] 碰 / [玩家X] 杠 东风 / [玩家X] 胡
+    private func parseDiscardEvents(from text: String) {
+        let lines = text.components(separatedBy: CharacterSet.newlines)
+        let pattern = #"\[(.+?)\]\s*(打|碰|杠|吃|胡)\s*(.*)"#
+
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+
+            let range = NSRange(trimmed.startIndex..., in: trimmed)
+            if let match = regex.firstMatch(in: trimmed, range: range) {
+                let player = String(trimmed[Range(match.range(at: 1), in: trimmed)!])
+                let action = String(trimmed[Range(match.range(at: 2), in: trimmed)!])
+                let tile = match.range(at: 3).location != NSNotFound
+                    ? String(trimmed[Range(match.range(at: 3), in: trimmed)!]).trimmingCharacters(in: .whitespaces)
+                    : ""
+
+                let event = DiscardEvent(
+                    player: player,
+                    tile: tile,
+                    action: action,
+                    timestamp: Date()
+                )
+
+                print("[QwenOmni] 解析打牌事件: \(player) \(action) \(tile)")
+                onDiscardEvent?(event)
+            }
+        }
     }
 }
 
