@@ -27,13 +27,21 @@ struct DualCameraView: View {
     private var boundingBoxes: [CGRect] {
         isLeft ? model.boundingBoxesLeft : model.boundingBoxesRight
     }
-    
+
     private var detectedClasses: [String] {
         isLeft ? model.detectedClassesLeft : model.detectedClassesRight
     }
-    
+
     private var confidences: [Float] {
         isLeft ? model.confidencesLeft : model.confidencesRight
+    }
+
+    private var objectDepths: [Float?] {
+        isLeft ? model.objectDepths : []
+    }
+
+    private var objectDistanceMeters: [Float?] {
+        isLeft ? model.objectDistanceMeters : []
     }
     
     var body: some View {
@@ -62,25 +70,39 @@ struct DualCameraView: View {
                         let box = boundingBoxes[index]
                         let confidence = confidences[index]
                         let className = detectedClasses[index]
-                        
+
                         // 根据className生成固定的随机颜色
                         let color = Color(hue: Double(className.hashValue % 360) / 360.0,
                                        saturation: 0.8,
                                        brightness: 0.8)
-                        
+
                         let scaledBoxCenterCrop = CGRect(
                             x: box.origin.x * geometry.size.width,
                             y: geometry.size.height - box.origin.y * geometry.size.height - box.size.height * geometry.size.height,
                             width: box.size.width * geometry.size.width,
                             height: box.size.height * geometry.size.height
                         )
-                        
+
+                        // 距离标签（仅左摄像头有深度数据）
+                        let distLabel: String = {
+                            // 优先显示实际距离（米）
+                            if index < objectDistanceMeters.count,
+                               let m = objectDistanceMeters[index] {
+                                return String(format: " · %.1fm", m)
+                            }
+                            // 回退：相对标签
+                            guard index < objectDepths.count, let d = objectDepths[index] else { return "" }
+                            if d < 0.33 { return " · 近" }
+                            else if d < 0.66 { return " · 中" }
+                            else { return " · 远" }
+                        }()
+
                         ZStack(alignment: .leading, spacing: 0) {
                             Rectangle()
                                 .path(in: scaledBoxCenterCrop)
                                 .stroke(color, lineWidth: 2)
-                            
-                            Text("\(className) (\(Int(confidence))%)")
+
+                            Text("\(className) (\(Int(confidence))%)\(distLabel)")
                                 .font(.caption)
                                 .foregroundColor(color)
                                 .background(Color.black.opacity(0.5))
@@ -424,25 +446,37 @@ struct BoundingBoxOverlay: View {
                     let box = model.boundingBoxes[index]
                     let confidence = model.confidences[index]
                     let className = model.detectedClasses[index]
-                    
+
                     // 根据className生成固定的随机颜色
                     let color = Color(hue: Double(className.hashValue % 360) / 360.0,
                                    saturation: 0.8,
                                    brightness: 0.8)
-                    
+
                     let scaledBoxCenterCrop = CGRect(
                         x: box.origin.x * geometry.size.width,
                         y: geometry.size.height - box.origin.y * geometry.size.height - box.size.height * geometry.size.height,
                         width: box.size.width * geometry.size.width,
                         height: box.size.height * geometry.size.height
                     )
-                    
+
+                    // 距离标签
+                    let distLabel: String = {
+                        if index < model.objectDistanceMeters.count,
+                           let m = model.objectDistanceMeters[index] {
+                            return String(format: " · %.1fm", m)
+                        }
+                        guard index < model.objectDepths.count, let d = model.objectDepths[index] else { return "" }
+                        if d < 0.33 { return " · 近" }
+                        else if d < 0.66 { return " · 中" }
+                        else { return " · 远" }
+                    }()
+
                     ZStack(alignment: .leading, spacing: 0) {
                         Rectangle()
                             .path(in: scaledBoxCenterCrop)
                             .stroke(color, lineWidth: 2)
-                        
-                        Text("\(className) (\(Int(confidence))%)")
+
+                        Text("\(className) (\(Int(confidence))%)\(distLabel)")
                             .font(.caption)
                             .foregroundColor(color)
                             .background(Color.black.opacity(0.5))

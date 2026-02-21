@@ -57,6 +57,16 @@ public class AppModel: ObservableObject {
     // 深度图相关
     var depthImage: UIImage?
     private var depthPixelBuffer: CVPixelBuffer?
+
+    // 深度距离融合
+    var rawDepthValues: [Float] = []        // 深度图原始深度值（512×512 展开，值越小越近）
+    var depthMinVal: Float = 0              // 本帧最小深度（对应最近点）
+    var depthMaxVal: Float = 0             // 本帧最大深度（对应最远点）
+    var depthCropX: Int = 0                 // 深度预处理的裁剪偏移 X
+    var depthCropY: Int = 0                 // 深度预处理的裁剪偏移 Y
+    var depthScaleFactor: Float = 1.0       // 深度预处理的缩放系数
+    var objectDepths: [Float?] = []         // 与 boundingBoxesLeft 并行：相对距离（0=近, 1=远）
+    var objectDistanceMeters: [Float?] = [] // 与 boundingBoxesLeft 并行：估算距离（米）
     
     // 深度估计模型和像素缓冲池
     private var depthModel: RaftStereo512?
@@ -368,14 +378,116 @@ public class AppModel: ObservableObject {
         
         do {
             let prediction = try await model.prediction(input: RaftStereo512Input(left_: leftRescaled.0, right_: rightRescaled.0))
-            
+
             if let depthBuffer = multiArrayToRGBA(prediction.var_4967) {
                 self.depthPixelBuffer = depthBuffer
                 self.depthImage = convertToUIImage(pixelBuffer: depthBuffer)
             }
+            // 存储原始视差数据，供检测框距离融合使用
+            storeDepthData(prediction.var_4967, cropInfo: leftRescaled)
         } catch {
             print("深度估计错误: \(error)")
         }
+    }
+
+    // MARK: - 深度距离融合
+
+    /// 存储原始视差数组及裁剪参数，供检测框距离估算使用
+    private func storeDepthData(_ multiArray: MLMultiArray, cropInfo: (CVPixelBuffer, Float, Int, Int)) {
+        guard multiArray.dataType == .float32,
+              multiArray.shape.count == 4,
+              multiArray.shape[2].intValue == 512,
+              multiArray.shape[3].intValue == 512 else { return }
+
+        let count = 512 * 512
+        let floatPtr = multiArray.dataPointer.bindMemory(to: Float.self, capacity: count)
+
+        var minVal: Float = 0
+        var maxVal: Float = 0
+        vDSP_minv(floatPtr, 1, &minVal, vDSP_Length(count))
+        vDSP_maxv(floatPtr, 1, &maxVal, vDSP_Length(count))
+
+        self.rawDepthValues = Array(UnsafeBufferPointer(start: floatPtr, count: count))
+        self.depthMinVal = minVal
+        self.depthMaxVal = maxVal
+        self.depthCropX = cropInfo.2
+        self.depthCropY = cropInfo.3
+        self.depthScaleFactor = cropInfo.1
+
+        updateObjectDepths()
+    }
+
+    /// 对当前所有左摄像头检测框计算相对距离并更新 objectDepths / objectDistanceMeters
+    func updateObjectDepths() {
+        guard !rawDepthValues.isEmpty, depthMaxVal > depthMinVal else {
+            objectDepths = Array(repeating: nil, count: boundingBoxesLeft.count)
+            objectDistanceMeters = Array(repeating: nil, count: boundingBoxesLeft.count)
+            return
+        }
+        let infos = boundingBoxesLeft.map { depthInfo(for: $0) }
+        objectDepths = infos.map { $0.0 }
+        objectDistanceMeters = infos.map { $0.1 }
+    }
+
+    /// 在检测框内部采样 3×3 网格取中位深度，返回 (相对距离 0=近 1=远, 估算距离米)
+    /// 模型输出深度值（值越小越近），坐标越界返回 (nil, nil)
+    private func depthInfo(for box: CGRect) -> (Float?, Float?) {
+        guard cameraImageSize != .zero else { return (nil, nil) }
+
+        let camW = Float(cameraImageSize.width)
+        let camH = Float(cameraImageSize.height)
+
+        // 在检测框中心 60% 区域均匀采样 3×3，避免边缘噪声
+        var samples: [Float] = []
+        let offsets: [Float] = [0.25, 0.5, 0.75]
+        for sx in offsets {
+            for sy in offsets {
+                // Vision 归一化坐标（原点左下角）→ 像素坐标（原点左上角，翻转 Y 轴）
+                let normX = Float(box.origin.x) + Float(box.width) * sx
+                let normY = Float(box.origin.y) + Float(box.height) * sy
+                let pixX = normX * camW
+                let pixY = (1.0 - normY) * camH
+
+                // 像素坐标 → 深度图坐标（经裁剪 + 缩放映射到 512×512）
+                let depX = (pixX - Float(depthCropX)) * depthScaleFactor
+                let depY = (pixY - Float(depthCropY)) * depthScaleFactor
+
+                guard depX >= 0 && depX < 512 && depY >= 0 && depY < 512 else { continue }
+                samples.append(rawDepthValues[Int(depY) * 512 + Int(depX)])
+            }
+        }
+
+        guard !samples.isEmpty else { return (nil, nil) }
+
+        // 取中位数提高鲁棒性
+        let sorted = samples.sorted()
+        let median = sorted[sorted.count / 2]
+
+        // 修正方向：模型输出深度（值越小越近），直接归一化，0=近 1=远
+        let normalized = (median - depthMinVal) / (depthMaxVal - depthMinVal)
+
+        // 估算实际距离（米）
+        // 立体视觉公式：depth = fx * baseline / disparity
+        // disparity（原始图像像素）≈ abs(median) / depthScaleFactor
+        let distanceMeters: Float? = {
+            let absDisparity = abs(median) / depthScaleFactor
+            guard absDisparity > 0.1, depthScaleFactor > 0 else { return nil }
+
+            // 焦距：优先使用 ARKit 内参；否则根据图像宽度估算（假设水平 FOV ≈ 100°）
+            let fx: Float
+            if currentIntrinsics[0][0] > 10 {
+                fx = currentIntrinsics[0][0]
+            } else {
+                fx = camW / (2.0 * tan(50.0 * .pi / 180.0))
+            }
+
+            let baseline: Float = 0.065  // Vision Pro 双目基线约 65mm
+            let d = fx * baseline / absDisparity
+            guard d > 0.05 && d < 30.0 else { return nil }
+            return d
+        }()
+
+        return (normalized, distanceMeters)
     }
 
     func startSession() async {

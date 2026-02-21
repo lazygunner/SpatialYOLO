@@ -77,17 +77,17 @@ extension AppModel {
         }
             
         for observation in results where observation is VNRecognizedObjectObservation {
-            
+
             guard let objectObservation = observation as? VNRecognizedObjectObservation else {
                 continue
             }
-            
+
             if objectObservation.confidence < 0.5 {
                 continue
             }
             // Select only the label with the highest confidence.
             let topLabelObservation = objectObservation.labels[0]
-            
+
             // 存储检测结果
             if isLeft {
                 self.boundingBoxesLeft.append(objectObservation.boundingBox)
@@ -98,7 +98,12 @@ extension AppModel {
                 self.detectedClassesRight.append(topLabelObservation.identifier)
                 self.confidencesRight.append(Float(objectObservation.confidence * 100))
             }
-            
+
+        }
+
+        // 左摄像头检测框更新后，用最新深度图重新计算各框距离
+        if isLeft {
+            updateObjectDepths()
         }
     }
     
