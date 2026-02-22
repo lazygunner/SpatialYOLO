@@ -88,7 +88,7 @@ struct DualCameraView: View {
                             // 优先显示实际距离（米）
                             if index < objectDistanceMeters.count,
                                let m = objectDistanceMeters[index] {
-                                return String(format: " · %.1fm", m)
+                                return String(format: " · %d cm", Int(m * 100))
                             }
                             // 回退：相对标签
                             guard index < objectDepths.count, let d = objectDepths[index] else { return "" }
@@ -121,12 +121,26 @@ struct DualCameraView: View {
 // 新增的深度图显示组件
 struct DepthView: View {
     let model: AppModel
-    
+
     var body: some View {
         VStack(spacing: 5) {
-            Text("深度图")
-                .font(.headline)
-                .foregroundColor(.white)
+            // 标题行 + 双目/单目切换
+            HStack {
+                Text("深度图")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Spacer()
+                Picker("", selection: Binding<AppModel.DepthSource>(
+                    get: { model.depthSource },
+                    set: { model.depthSource = $0 }
+                )) {
+                    Text("双目").tag(AppModel.DepthSource.stereo)
+                    Text("单目").tag(AppModel.DepthSource.monocular)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 120)
+            }
+            .padding(.horizontal, 8)
             
             GeometryReader { geometry in
                 ZStack {
@@ -463,7 +477,7 @@ struct BoundingBoxOverlay: View {
                     let distLabel: String = {
                         if index < model.objectDistanceMeters.count,
                            let m = model.objectDistanceMeters[index] {
-                            return String(format: " · %.1fm", m)
+                            return String(format: " · %d cm", Int(m * 100))
                         }
                         guard index < model.objectDepths.count, let d = model.objectDepths[index] else { return "" }
                         if d < 0.33 { return " · 近" }
