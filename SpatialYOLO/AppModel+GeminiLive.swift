@@ -64,11 +64,60 @@ extension AppModel {
         activeProvider = provider
     }
 
+    /// 构建当前帧结构化检测上下文文本（在主线程调用）
+    func buildDetectionContext() -> String {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let timeStr = formatter.string(from: now)
+
+        var lines: [String] = ["[帧分析] \(timeStr)"]
+
+        // 物体检测
+        let objCount = boundingBoxesLeft.count
+        if objCount > 0 {
+            lines.append("[物体检测] \(objCount) 个目标:")
+            for i in 0..<objCount {
+                let cls = i < detectedClassesLeft.count ? detectedClassesLeft[i] : "unknown"
+                let conf = i < confidencesLeft.count ? confidencesLeft[i] : 0
+                var distStr = ""
+                if i < objectDistanceMeters.count, let d = objectDistanceMeters[i] {
+                    distStr = ", 距离约\(Int(d * 100))cm"
+                }
+                lines.append("  - \(cls) (\(Int(conf))%)\(distStr)")
+            }
+        } else {
+            lines.append("[物体检测] 未检测到目标")
+        }
+
+        // 人脸分析
+        let faceCount = faceDetections.count
+        if faceCount > 0 {
+            lines.append("[人脸分析] 检测到 \(faceCount) 张人脸:")
+            for (idx, face) in faceDetections.enumerated() {
+                // 找主表情（最高分）
+                let sorted = face.expressionScores.sorted { $0.value > $1.value }
+                if let top = sorted.first {
+                    let topStr = top.key.rawValue
+                    let topPct = Int(top.value * 100)
+                    // top3
+                    let top3 = sorted.prefix(3).map { "\($0.key.rawValue):\(Int($0.value * 100))%" }.joined(separator: ", ")
+                    lines.append("  - 人脸\(idx + 1): 表情=\(topStr) (\(topPct)%) [候选: \(top3)]")
+                }
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
     /// 将摄像头帧发送给 AI 服务（1fps 采样，在帧循环中调用）
     /// 压缩和发送在后台线程执行，不阻塞主线程帧循环
     func sendFrameToGemini(_ pixelBuffer: CVPixelBuffer) {
         guard isGeminiActive,
               activeService.connectionState == .connected else { return }
+
+        // 在主线程构建检测上下文（需要访问主线程属性）
+        let contextText = buildDetectionContext()
 
         // CIImage 是轻量惰性对象，主线程创建安全且会 retain pixelBuffer
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
@@ -76,6 +125,9 @@ extension AppModel {
 
         // 重型压缩工作放到后台线程
         Task.detached {
+            // 先发送检测上下文，再发送视频帧
+            service.sendDetectionContext(contextText)
+
             let context = CIContext()
             guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return }
 

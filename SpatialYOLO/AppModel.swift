@@ -155,8 +155,9 @@ public class AppModel: ObservableObject {
 
     /// AI Live 模式：通用视觉助手，负责观察环境、回答问题
     static let aiLiveSystemInstruction = """
-    你是 Apple Vision Pro 上的智能视觉助手。通过摄像头实时观察用户周围的环境。
+    你是 Apple Vision Pro 上的智能视觉助手（SPATIAL·AI v2.0）。通过摄像头实时观察用户周围的环境。
     你的能力：描述所见场景和物体、回答用户关于环境的问题、提供实用建议。
+    每帧画面之前会附带结构化检测数据（[帧分析]标签），包含 YOLO 物体检测结果和人脸表情分析，请综合图像和结构化数据来回答。
     要求：始终用中文回答，语言简洁自然，不超过3句话。
     """
 
@@ -185,6 +186,10 @@ public class AppModel: ObservableObject {
     var isGeminiActive: Bool = false
     var userInputText: String = ""
     private var lastGeminiSendTime = Date.distantPast
+
+    // MARK: - AI Live 增强
+    var faceDetections: [FaceDetection] = []     // 当前帧人脸检测结果
+    var aiLiveModelName: String = "yolo11n"       // 实际加载的 YOLO 模型名
 
     // MARK: - 麻将牌型分析服务（独立 LLM）
     var mahjongAnalysisService = MahjongAnalysisService(apiKey: AppModel.loadQwenAPIKey())
@@ -825,13 +830,18 @@ public class AppModel: ObservableObject {
                     }
                 }
 
-                // Spatial YOLO / AI Live 模式：左摄像头 yolo11n 检测
+                // Spatial YOLO / AI Live 模式：左摄像头 YOLO 检测（+ AI Live 追加人脸检测）
                 if activeFeature == .spatialYOLO || activeFeature == .geminiLive {
                     let leftBuffer = self.pixelBufferLeft!
                     let leftRequests = self.requestsLeft
-                    Task.detached {
+                    let runFace = activeFeature == .geminiLive
+                    Task.detached { [weak self] in
                         let handler = VNImageRequestHandler(cvPixelBuffer: leftBuffer)
                         try? handler.perform(leftRequests)
+                        // AI Live 模式额外运行人脸检测（串行在同一 Task 中）
+                        if runFace, let detections = try? FaceDetectionService.detect(in: leftBuffer) {
+                            await MainActor.run { self?.faceDetections = detections }
+                        }
                     }
                 }
 

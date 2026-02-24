@@ -17,11 +17,64 @@ extension AppModel {
             setupVisionForCamera(isLeft: true)
             setupVisionForCamera(isLeft: false)
         case .geminiLive:
-            // AI Live：仅左摄像头 yolo11n，边检测边发送画面给 AI
-            setupVisionForCamera(isLeft: true)
+            // AI Live：优先 yolo11s，回退 yolo11n，仅左摄像头
+            setupVisionForGeminiLive()
         case .mahjong:
             // 麻将牌专用模型：mahjong_yolo（左摄像头）
             setupMahjongVision()
+        }
+    }
+
+    /// AI Live 专用 YOLO 初始化：动态加载 yolo11s，不存在则回退 yolo11n
+    private func setupVisionForGeminiLive() {
+        let config = MLModelConfiguration()
+        config.computeUnits = .cpuAndGPU
+
+        // 尝试动态加载 yolo11s.mlmodelc
+        var mlModel: MLModel?
+        if let url = Bundle.main.url(forResource: "yolo11s", withExtension: "mlmodelc") {
+            do {
+                mlModel = try MLModel(contentsOf: url, configuration: config)
+                aiLiveModelName = "yolo11s"
+                print("[YOLO] AI Live 模式: 使用 yolo11s")
+            } catch {
+                print("[YOLO] yolo11s 加载失败，回退 yolo11n: \(error.localizedDescription)")
+            }
+        } else {
+            print("[YOLO] yolo11s.mlmodelc 未找到，回退 yolo11n")
+        }
+
+        // 回退到 yolo11n
+        if mlModel == nil {
+            mlModel = try! yolo11n().model
+            aiLiveModelName = "yolo11n"
+            print("[YOLO] AI Live 模式: 使用 yolo11n (回退)")
+        }
+
+        guard let finalModel = mlModel else { return }
+
+        do {
+            let visionModel = try VNCoreMLModel(for: finalModel)
+            let objectRecognition = VNCoreMLRequest(model: visionModel) { (request, error) in
+                if let error = error {
+                    print("[YOLO] AI Live 左摄像头错误: \(error.localizedDescription)")
+                }
+                DispatchQueue.main.async {
+                    if let results = request.results {
+                        self.drawVisionRequestResults(results, request, isLeft: true)
+                    } else {
+                        self.boundingBoxesLeft = []
+                        self.detectedClassesLeft = []
+                        self.confidencesLeft = []
+                    }
+                }
+            }
+            objectRecognition.imageCropAndScaleOption = self.imageCropOption
+            self.requestsLeft = [objectRecognition]
+        } catch {
+            print("[YOLO] AI Live VNCoreMLModel 创建失败: \(error)")
+            // 最终回退：使用标准方法
+            setupVisionForCamera(isLeft: true)
         }
     }
     

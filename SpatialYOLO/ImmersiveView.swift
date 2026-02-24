@@ -79,17 +79,18 @@ struct ImmersiveView: View {
                 }
             }
 
-            // Gemini Live 附件：摄像头画面 + 字幕叠加 + 控制面板
+            // Gemini Live 附件：JARVIS HUD + 字幕叠加 + 控制面板
             Attachment(id: "geminiBoundingBox") {
                 VStack(spacing: 8) {
                     ZStack(alignment: .bottom) {
-                        DualCameraView(model: appModel, isLeft: true)
+                        // JARVIS HUD 覆盖层（自带相机画面 + 检测框 + 人脸卡 + telemetry）
+                        AILiveHUDView(model: appModel)
 
                         // AI 回复字幕（打字机效果，底部 20% 区域）
                         GeminiSubtitleOverlay(geminiService: appModel.activeService)
                     }
 
-                    // 控制面板（视频正下方）
+                    // 控制面板（HUD 风格）
                     GeminiResponseView(appModel: appModel)
 
                     exitButton

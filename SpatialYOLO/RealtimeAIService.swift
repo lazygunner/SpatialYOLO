@@ -56,4 +56,7 @@ protocol RealtimeAIService: Observable, AnyObject {
     func disconnect()
     func sendVideoFrame(jpegData: Data)
     func sendTextMessage(_ text: String)
+
+    /// 发送当前帧结构化检测上下文（在视频帧之前调用）
+    func sendDetectionContext(_ text: String)
 }

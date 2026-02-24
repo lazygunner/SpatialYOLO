@@ -165,6 +165,29 @@ class QwenOmniService: RealtimeAIService {
         sendJSON(message)
     }
 
+    /// 发送结构化检测上下文（不调用 response.create，不干扰 VAD）
+    func sendDetectionContext(_ text: String) {
+        guard connectionState == .connected else { return }
+        // Qwen 要求先发音频，未发音频前跳过
+        guard hasSentAudio else { return }
+
+        let itemMessage: [String: Any] = [
+            "type": "conversation.item.create",
+            "item": [
+                "type": "message",
+                "role": "user",
+                "content": [
+                    [
+                        "type": "input_text",
+                        "text": text
+                    ]
+                ]
+            ]
+        ]
+        sendJSON(itemMessage)
+        // 注意：不调用 response.create，让 VAD 自然触发响应
+    }
+
     func sendTextMessage(_ text: String) {
         guard connectionState == .connected else {
             print("[QwenOmni] 发送失败: 连接未就绪 (state=\(connectionState))")

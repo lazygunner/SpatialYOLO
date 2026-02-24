@@ -163,6 +163,26 @@ class GeminiLiveService: RealtimeAIService {
         sendJSON(message)
     }
 
+    /// 发送结构化检测上下文（turnComplete=false，不触发响应）
+    func sendDetectionContext(_ text: String) {
+        guard connectionState == .connected else { return }
+
+        let message: [String: Any] = [
+            "clientContent": [
+                "turns": [
+                    [
+                        "role": "user",
+                        "parts": [
+                            ["text": text]
+                        ]
+                    ]
+                ],
+                "turnComplete": false
+            ]
+        ]
+        sendJSON(message)
+    }
+
     /// 发送用户文字消息
     func sendTextMessage(_ text: String) {
         guard connectionState == .connected else {
