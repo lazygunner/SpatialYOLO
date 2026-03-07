@@ -266,8 +266,12 @@ struct MahjongTileBar: View {
                         Text(model.mahjongHandState == .waitingToDiscard ? "待打牌" : "待摸牌")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(model.mahjongHandState == .waitingToDiscard ? .orange : .cyan)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 6))
+                            .hoverEffect()
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
                 }
 
                 Spacer()
@@ -282,8 +286,12 @@ struct MahjongTileBar: View {
                             Text("重置")
                         }
                         .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 6))
+                        .hoverEffect()
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
                     .tint(.orange)
                 } else {
                     Button {
@@ -294,8 +302,12 @@ struct MahjongTileBar: View {
                             Text("开始牌局")
                         }
                         .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 6))
+                        .hoverEffect()
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
                     .tint(.green)
                     .disabled(model.mahjongDetections.isEmpty)
                 }
@@ -314,6 +326,10 @@ struct MahjongTileBar: View {
                         Text(model.mahjongAnalysisService.isAnalyzing ? "分析中..." : "分析牌型")
                     }
                     .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 8))
+                    .hoverEffect()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
@@ -325,8 +341,11 @@ struct MahjongTileBar: View {
                 } label: {
                     Image(systemName: model.mahjongPanelExpanded ? "chevron.up" : "chevron.down")
                         .font(.caption.bold())
+                        .padding(6)
+                        .contentShape(.hoverEffect, Circle())
+                        .hoverEffect()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
                 .tint(.secondary)
             }
             .padding(.horizontal, 12)
@@ -528,8 +547,12 @@ struct MahjongDiscardRecordView: View {
                     } label: {
                         Text("清空")
                             .font(.system(size: 10))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 4))
+                            .hoverEffect()
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
                     .tint(.red)
                 }
             }

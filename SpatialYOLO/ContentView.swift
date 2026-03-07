@@ -13,6 +13,7 @@ struct ContentView: View {
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,75 +33,38 @@ struct ContentView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
-            .padding(.top, 30)
-            .padding(.bottom, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 20)
 
-            // 功能卡片区域
-            HStack(spacing: 20) {
-                // YOLO 双目检测卡片
-                FeatureCard(
-                    icon: "eye.trianglebadge.exclamationmark",
-                    title: "Spatial YOLO",
-                    subtitle: "双目物体检测 + 深度估计",
-                    description: "使用 YOLOv11 进行实时物体检测，双目立体视觉生成深度图",
-                    gradient: LinearGradient(
-                        colors: [
-                            Color.blue.opacity(0.6),
-                            Color.cyan.opacity(0.4)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    isActive: appModel.immersiveSpaceState == .open
-                        && appModel.activeFeature == .spatialYOLO,
-                    isDisabled: appModel.immersiveSpaceState == .inTransition
-                ) {
-                    await launchFeature(.spatialYOLO)
-                }
-
-                // AI Live 卡片（支持 Gemini / Qwen）
-                FeatureCard(
-                    icon: "sparkles",
-                    title: "AI Live",
-                    subtitle: "交互式视觉助手",
-                    description: "实时画面+语音双向对话，支持 Gemini / Qwen 切换",
-                    gradient: LinearGradient(
-                        colors: [
-                            Color.purple.opacity(0.6),
-                            Color.pink.opacity(0.4)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    isActive: appModel.immersiveSpaceState == .open
-                        && appModel.activeFeature == .geminiLive,
-                    isDisabled: appModel.immersiveSpaceState == .inTransition
-                ) {
-                    await launchFeature(.geminiLive)
-                }
-
-                // 麻将牌检测 + AI 助手
-                FeatureCard(
-                    icon: "rectangle.split.3x3",
-                    title: "Mahjong AI",
-                    subtitle: "麻将牌识别 + AI 助手",
-                    description: "实时检测麻将牌面，结合 AI 语音分析牌局",
-                    gradient: LinearGradient(
-                        colors: [
-                            Color.green.opacity(0.6),
-                            Color.teal.opacity(0.4)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    isActive: appModel.immersiveSpaceState == .open
-                        && appModel.activeFeature == .mahjong,
-                    isDisabled: appModel.immersiveSpaceState == .inTransition
-                ) {
-                    await launchFeature(.mahjong)
-                }
+            // AI Live 卡片（支持 Gemini / Qwen）
+            FeatureCard(
+                icon: "sparkles",
+                title: "Live AI Agent",
+                subtitle: "交互式视觉助手",
+                description: "实时画面+语音双向对话，保存日常记忆",
+                gradient: LinearGradient(
+                    colors: [
+                        Color.purple.opacity(0.6),
+                        Color.pink.opacity(0.4)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                isActive: appModel.immersiveSpaceState == .open
+                    && appModel.activeFeature == .geminiLive,
+                isDisabled: appModel.immersiveSpaceState == .inTransition
+            ) {
+                await launchFeature(.geminiLive)
             }
             .padding(.horizontal, 30)
+
+            Spacer().frame(height: 20)
+
+            // 项目列表
+            ProjectListView { session in
+                openWindow(id: "projectDetail", value: session.id)
+            }
+            .padding(.horizontal, 10)
 
             Spacer()
 
@@ -120,10 +84,10 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .padding(.bottom, 20)
+                .padding(.bottom, 16)
             }
         }
-        .frame(width: 880, height: 420)
+        .frame(width: 880, height: 500)
     }
 
     // MARK: - 启动/切换功能
@@ -221,20 +185,8 @@ struct FeatureCard: View {
                     .foregroundColor(.secondary)
                     .lineLimit(2)
 
-                Spacer(minLength: 0)
-
-                // 底部按钮提示
-                HStack {
-                    Spacer()
-                    Text(isActive ? "点击退出" : "点击启动")
-                        .font(.caption.bold())
-                        .foregroundColor(isActive ? .red.opacity(0.8) : .white.opacity(0.8))
-                    Image(systemName: isActive ? "stop.circle" : "arrow.right.circle.fill")
-                        .foregroundColor(isActive ? .red.opacity(0.8) : .white.opacity(0.8))
-                }
             }
             .padding(20)
-            .frame(width: 260, height: 280)
             .background(
                 ZStack {
                     // 渐变底色
@@ -255,9 +207,12 @@ struct FeatureCard: View {
                         )
                 }
             )
+            .clipShape(RoundedRectangle(cornerRadius: 20))
             .glassBackgroundEffect()
         }
+        .frame(width: 800, height: 180)
         .buttonStyle(.plain)
+        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 20))
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.5 : 1.0)
     }

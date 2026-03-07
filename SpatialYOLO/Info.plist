@@ -10,6 +10,8 @@
 	<string>main camera</string>
 	<key>NSWorldSensingUsageDescription</key>
 	<string>world sensing</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>我们需要获取您的位置以在回忆中记录发生地点。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsTabbedSceneCollection</key>

@@ -52,9 +52,7 @@ protocol RealtimeAIService: Observable, AnyObject {
     /// 系统提示词，由外部在 connect() 前注入，各模式独立
     var systemInstruction: String { get set }
 
-    /// 双语翻译字幕（当前回合）：第一行中文，第二行英文
-    var subtitleChinese: String { get }
-    var subtitleEnglish: String { get }
+
 
     func connect()
     func disconnect()

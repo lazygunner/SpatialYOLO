@@ -113,69 +113,11 @@ struct GeminiResponseView: View {
                     .foregroundColor(Color.hudCyan.opacity(0.5))
             }
 
-            Spacer()
-
             Divider()
                 .background(Color.hudCyan.opacity(0.3))
 
-            // 用户文字输入区域
-            HStack(spacing: 8) {
-                TextField("INPUT QUERY...", text: $appModel.userInputText)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(Color.hudCyan)
-                    .textFieldStyle(.plain)
-                    .padding(6)
-                    .background(Color.black.opacity(0.5))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(Color.hudCyan.opacity(0.4), lineWidth: 1)
-                    )
-                    .onSubmit {
-                        appModel.sendUserQuestion(appModel.userInputText)
-                    }
-                    .disabled(!appModel.isGeminiActive
-                              || service.connectionState != .connected)
-
-                Button {
-                    appModel.sendUserQuestion(appModel.userInputText)
-                } label: {
-                    Text("▶")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color.hudCyan)
-                        .frame(width: 32, height: 28)
-                        .background(Color.hudCyan.opacity(0.15))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(Color.hudCyan.opacity(0.5), lineWidth: 1)
-                        )
-                        .cornerRadius(3)
-                }
-                .disabled(appModel.userInputText.isEmpty
-                          || !appModel.isGeminiActive
-                          || service.connectionState != .connected)
-            }
-            .padding(.horizontal, 12)
-
             // 按钮区域
             HStack(spacing: 8) {
-                // 自动解说开关
-                Button {
-                    appModel.autoNarrate.toggle()
-                } label: {
-                    Text(appModel.autoNarrate ? "◉ AUTO" : "○ AUTO")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .frame(width: 80)
-                        .padding(.vertical, 6)
-                        .background(appModel.autoNarrate ? Color.hudAmber.opacity(0.2) : Color.clear)
-                        .foregroundColor(appModel.autoNarrate ? Color.hudAmber : Color.hudCyan.opacity(0.5))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(appModel.autoNarrate ? Color.hudAmber.opacity(0.7) : Color.hudCyan.opacity(0.3), lineWidth: 1)
-                        )
-                        .cornerRadius(3)
-                }
-                .buttonStyle(.plain)
-                .disabled(!appModel.isGeminiActive || service.connectionState != .connected)
 
                 Button {
                     appModel.toggleGeminiSession()
@@ -199,11 +141,9 @@ struct GeminiResponseView: View {
                     .padding(.vertical, 6)
                     .background(buttonBackground)
                     .foregroundColor(buttonForeground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(buttonBorder, lineWidth: 1)
-                    )
                     .cornerRadius(3)
+                    .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 3))
+                    .hoverEffect()
                 }
                 .buttonStyle(.plain)
 
@@ -227,15 +167,38 @@ struct GeminiResponseView: View {
                                 .stroke(Color.hudAmber.opacity(0.6), lineWidth: 1)
                         )
                         .cornerRadius(3)
+                        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 3))
+                        .hoverEffect()
                     }
                     .buttonStyle(.plain)
                 }
+
+                // 自动解说开关
+                Button {
+                    appModel.autoNarrate.toggle()
+                } label: {
+                    Text(appModel.autoNarrate ? "◉ AUTO" : "○ AUTO")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .frame(width: 80)
+                        .padding(.vertical, 6)
+                        .background(appModel.autoNarrate ? Color.hudAmber.opacity(0.2) : Color.clear)
+                        .foregroundColor(appModel.autoNarrate ? Color.hudAmber : Color.hudCyan.opacity(0.5))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(appModel.autoNarrate ? Color.hudAmber.opacity(0.7) : Color.hudCyan.opacity(0.3), lineWidth: 1)
+                        )
+                        .cornerRadius(3)
+                        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 3))
+                        .hoverEffect()
+                }
+                .buttonStyle(.plain)
+                .disabled(!appModel.isGeminiActive || service.connectionState != .connected)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
         }
         .padding(.vertical, 8)
-        .frame(width: 960, height: 240)
+        .frame(width: 960, height: 180)
         .background(Color.black.opacity(0.85))
         .overlay(
             RoundedRectangle(cornerRadius: 0)

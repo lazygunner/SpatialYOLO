@@ -56,6 +56,9 @@ extension AppModel {
         if activeFeature != .mahjong && !audioInputMonitor.isActive {
             audioInputMonitor.toggle()
         }
+
+        // 开始录制会话帧
+        sessionRecorder.startSession()
     }
 
     /// 停止 AI Live 会话
@@ -67,6 +70,10 @@ extension AppModel {
         if audioInputMonitor.isActive {
             audioInputMonitor.toggle()
         }
+
+        // 停止录制并重置场景状态
+        sessionRecorder.stopSession()
+        lastSentThumbnail = nil
     }
 
     /// 切换 AI Live 会话状态
@@ -95,18 +102,36 @@ extension AppModel {
 
         var lines: [String] = ["[帧分析] \(timeStr)"]
 
-        // 物体检测
+        // 物体检测（含空间位置）
         let objCount = boundingBoxesLeft.count
         if objCount > 0 {
             lines.append("[物体检测] \(objCount) 个目标:")
             for i in 0..<objCount {
                 let cls = i < detectedClassesLeft.count ? detectedClassesLeft[i] : "unknown"
                 let conf = i < confidencesLeft.count ? confidencesLeft[i] : 0
-                var distStr = ""
-                if i < objectDistanceMeters.count, let d = objectDistanceMeters[i] {
-                    distStr = ", 距离约\(Int(d * 100))cm"
+
+                // 空间位置：基于 Vision 归一化坐标（x: 0=左, 1=右）
+                var posStr = ""
+                if i < boundingBoxesLeft.count {
+                    let box = boundingBoxesLeft[i]
+                    let centerX = box.origin.x + box.width / 2.0
+                    let posName: String
+                    if centerX < 0.33 {
+                        posName = "左侧"
+                    } else if centerX > 0.67 {
+                        posName = "右侧"
+                    } else {
+                        posName = "正前方"
+                    }
+
+                    if i < objectDistanceMeters.count, let d = objectDistanceMeters[i] {
+                        posStr = ", \(posName)约\(String(format: "%.1f", d))米"
+                    } else {
+                        posStr = ", \(posName)"
+                    }
                 }
-                lines.append("  - \(cls) (\(Int(conf))%)\(distStr)")
+
+                lines.append("  - \(cls) (\(Int(conf))%)\(posStr)")
             }
         } else {
             lines.append("[物体检测] 未检测到目标")
@@ -142,46 +167,27 @@ extension AppModel {
         let contextText = buildDetectionContext()
         print("[帧分析] \(contextText)")
 
-        // 自动解说：检测场景变化并触发 AI 解说
-        var shouldNarrate = false
-        if autoNarrate {
-            let currentClasses = Set(detectedClassesLeft)
-            let now = Date()
-            let timeSinceLastNarration = now.timeIntervalSince(lastNarrationTime)
-
-            if timeSinceLastNarration >= narrationCooldown {
-                // 计算类别变化率
-                let added = currentClasses.subtracting(lastNarratedClasses)
-                let removed = lastNarratedClasses.subtracting(currentClasses)
-                let totalUnique = currentClasses.union(lastNarratedClasses)
-                let changeCount = added.count + removed.count
-
-                // 首次检测到物体，或变化超过 30%
-                let significantChange = !currentClasses.isEmpty && (
-                    lastNarratedClasses.isEmpty ||
-                    (totalUnique.count > 0 && Float(changeCount) / Float(totalUnique.count) > 0.3)
-                )
-
-                if significantChange {
-                    shouldNarrate = true
-                    lastNarratedClasses = currentClasses
-                    lastNarrationTime = now
-                    print("[自动解说] 场景变化: +\(added) -\(removed)，触发解说")
-                }
-            }
-        }
-
         // CIImage 是轻量惰性对象，主线程创建安全且会 retain pixelBuffer
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let service = self.activeService
+        let shouldAutoNarrate = self.autoNarrate
+        let cooldown = self.narrationCooldown
+        let threshold = self.sceneChangeThreshold
+        let lastThumb = self.lastSentThumbnail
+        let lastNarTime = self.lastNarrationTime
+        let recorder = self.sessionRecorder
+        let currentResponseText = self.activeService.responseText
+
+        let currentLabelsCapture = Set(self.detectedClassesLeft)
+        let lastLabelsCapture = self.lastNarratedLabels
 
         // 重型压缩工作放到后台线程
-        Task.detached {
+        Task.detached { [weak self] in
             // 先发送检测上下文，再发送视频帧
             service.sendDetectionContext(contextText)
-
-            let context = CIContext()
-            guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return }
+            
+            let ciContext = CIContext()
+            guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
 
             let originalWidth = CGFloat(cgImage.width)
             let originalHeight = CGFloat(cgImage.height)
@@ -210,12 +216,70 @@ extension AppModel {
 
             service.sendVideoFrame(jpegData: jpegData)
 
-            // 场景有变化时，发送帧后触发 AI 解说
+            // 录制帧到本地（含 AI 回复文本）
+            recorder.saveFrame(jpegData: jpegData, context: contextText, responseText: currentResponseText)
+
+            // 图像场景变化检测 (Auto 模式逻辑)
+            var shouldNarrate = false
+
+            if shouldAutoNarrate {
+                let now = Date()
+                if now.timeIntervalSince(lastNarTime) >= cooldown {
+                    // 触发器 1：检测到的物体标签发生显著变化（新物体出现或消失）
+                    let added = currentLabelsCapture.subtracting(lastLabelsCapture)
+                    let removed = lastLabelsCapture.subtracting(currentLabelsCapture)
+                    
+                    if !added.isEmpty || !removed.isEmpty {
+                        shouldNarrate = true
+                        print("[自动解说] 物体变化: +\(added), -\(removed)，触发解说")
+                    } else {
+                        // 触发器 2：像素级变化检测 (MSE)
+                        let thumbSize = 64
+                        if let thumbCtx = CGContext(
+                            data: nil, width: thumbSize, height: thumbSize,
+                            bitsPerComponent: 8, bytesPerRow: thumbSize * 4,
+                            space: colorSpace,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+                        ) {
+                            thumbCtx.interpolationQuality = .low
+                            thumbCtx.draw(cgImage, in: CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize))
+
+                            if let currentThumb = thumbCtx.makeImage() {
+                                if let prevThumb = lastThumb {
+                                    let mse = SessionRecorder.computeImageMSE(prevThumb, currentThumb, size: thumbSize)
+                                    if mse > threshold {
+                                        shouldNarrate = true
+                                        print("[自动解说] 场景变化 MSE=\(String(format: "%.4f", mse))，触发解说")
+                                    }
+                                } else {
+                                    // 首帧，触发初始解说
+                                    shouldNarrate = true
+                                    print("[自动解说] 首帧，触发初始解说")
+                                }
+                                
+                                await MainActor.run {
+                                    self?.lastSentThumbnail = currentThumb
+                                }
+                            }
+                        }
+                    }
+
+                    if shouldNarrate {
+                        await MainActor.run {
+                            self?.lastNarrationTime = now
+                            self?.lastNarratedLabels = currentLabelsCapture
+                        }
+                    }
+                }
+            }
+
             if shouldNarrate {
                 service.sendTextMessage("请简要描述你现在看到的画面内容。")
             }
         }
     }
+
+
 
     /// 发送用户提问
     func sendUserQuestion(_ text: String) {

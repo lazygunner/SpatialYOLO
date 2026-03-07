@@ -97,10 +97,11 @@ struct ImmersiveView: View {
                 }
             }
 
-            // 双语翻译字幕：独立悬浮在用户正前方偏下，与 HUD 面板分离
+            // 语音转写字幕：独立悬浮在用户正前方偏下
             Attachment(id: "translationSubtitle") {
                 TranslationSubtitleOverlay(geminiService: appModel.activeService)
             }
+
         }
         .task {
             appModel.setupVision()
@@ -150,7 +151,7 @@ struct ImmersiveView: View {
             anchor.addChild(attachment)
         }
 
-        // 双语字幕：正前方居中、视野偏下，独立悬浮，无旋转
+        // 语音转写字幕：正前方居中、视野偏下，独立悬浮
         if let attachment = attachments.entity(for: "translationSubtitle") {
             translationSubtitleEntity = attachment
             attachment.position = SIMD3<Float>(0, -0.22, -0.65)

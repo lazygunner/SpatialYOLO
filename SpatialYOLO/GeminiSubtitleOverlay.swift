@@ -4,7 +4,7 @@
 //
 //  AI 字幕叠加层：
 //    GeminiSubtitleOverlay      — HUD 风格实时转录（麻将模式使用）
-//    TranslationSubtitleOverlay — 双语翻译字幕（AI Live 模式使用）
+//    TranslationSubtitleOverlay — 语音转写浮动字幕（AI Live 模式使用）
 //
 
 import SwiftUI
@@ -91,43 +91,50 @@ struct GeminiSubtitleOverlay: View {
     }
 }
 
-// MARK: - 双语翻译字幕（AI Live 模式）
+// MARK: - 语音转写浮动字幕（AI Live 模式）
 
-/// 实时双语翻译字幕叠加层
-/// 显示 AI 翻译的中英双语内容：第一行中文、第二行英文
-/// 用于 AI Live 模式，字幕在画面底部醒目显示
+/// 独立悬浮的语音转写字幕叠加层
+/// 显示 AI 的语音转写内容，自动滚动到最新文字
+/// 用于 AI Live 模式，字幕在用户正前方偏下位置独立悬浮
 struct TranslationSubtitleOverlay: View {
     let geminiService: any RealtimeAIService
 
-    var body: some View {
-        let chinese = geminiService.subtitleChinese
-        let english = geminiService.subtitleEnglish
-        let hasContent = !chinese.isEmpty || !english.isEmpty
+    @State private var textVersion: Int = 0
+    @State private var lastTextLength: Int = 0
+    @State private var pollTask: Task<Void, Never>?
+    @State private var displayedText: String = ""
 
+    var body: some View {
         VStack(spacing: 0) {
-            if hasContent {
-                VStack(alignment: .center, spacing: 8) {
-                    // 第一行：中文
-                    if !chinese.isEmpty {
-                        Text(chinese)
-                            .font(.system(size: 28, weight: .semibold))
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
+            if !displayedText.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(displayedText)
+                                .font(.system(size: 24, weight: .medium))
+                                .foregroundColor(.white)
+                                .multilineTextAlignment(.leading)
+                                .lineSpacing(6)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: 800, alignment: .leading)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 14)
+
+                            Color.clear
+                                .frame(height: 1)
+                                .id("subtitleAnchor")
+                        }
                     }
-                    // 第二行：英文
-                    if !english.isEmpty {
-                        Text(english)
-                            .font(.system(size: 22, weight: .regular))
-                            .foregroundColor(.white.opacity(0.88))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 860, maxHeight: 120)
+                    .onChange(of: textVersion) {
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                proxy.scrollTo("subtitleAnchor", anchor: .bottom)
+                            }
+                        }
                     }
                 }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 14)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color.black.opacity(0.72))
@@ -136,11 +143,26 @@ struct TranslationSubtitleOverlay: View {
                                 .stroke(Color.white.opacity(0.18), lineWidth: 1)
                         )
                 )
-                .frame(maxWidth: 860)
                 .padding(.bottom, 20)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: chinese)
-        .animation(.easeInOut(duration: 0.25), value: english)
+        .animation(.easeInOut(duration: 0.25), value: displayedText.isEmpty)
+        .onAppear { startPolling() }
+        .onDisappear { pollTask?.cancel() }
+    }
+
+    private func startPolling() {
+        pollTask = Task { @MainActor in
+            while !Task.isCancelled {
+                let currentText = geminiService.responseText
+                if currentText.count != lastTextLength {
+                    lastTextLength = currentText.count
+                    displayedText = currentText
+                    textVersion += 1
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            }
+        }
     }
 }
+

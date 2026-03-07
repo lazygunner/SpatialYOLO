@@ -58,6 +58,8 @@ struct ToggleImmersiveSpaceButton: View {
             Text(appModel.immersiveSpaceState == .open ? "Exit" : "Start")
         }
         .disabled(appModel.immersiveSpaceState == .inTransition)
+        .contentShape(.hoverEffect, .capsule)
+        .hoverEffect()
         .animation(.none, value: 0)
         .fontWeight(.semibold)
     }

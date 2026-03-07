@@ -237,7 +237,7 @@ class AudioInputMonitor {
 
             if let error {
                 let nsError = error as NSError
-                let silentCodes: Set<Int> = [203, 209, 216, 301, 1101]
+                let silentCodes: Set<Int> = [203, 209, 216, 301, 1101, 1110]
                 if !silentCodes.contains(nsError.code) {
                     print("[STT] 错误 \(nsError.code): \(nsError.localizedDescription)")
                     DispatchQueue.main.async { self.sttStatus = .error(nsError.localizedDescription) }

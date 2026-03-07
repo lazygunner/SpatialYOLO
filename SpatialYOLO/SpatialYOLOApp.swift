@@ -30,6 +30,15 @@ struct SpatialYOLOApp: App {
                 }
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
-        
+
+        // 项目详情窗口
+        WindowGroup(id: "projectDetail", for: String.self) { $sessionId in
+            if let sessionId,
+               let session = SessionRecorder.listSessions().first(where: { $0.id == sessionId }) {
+                ProjectDetailView(session: session)
+            }
+        }
+        .defaultSize(width: 900, height: 620)
+
      }
 }

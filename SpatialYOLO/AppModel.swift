@@ -157,8 +157,15 @@ public class AppModel: ObservableObject {
     static let aiLiveSystemInstruction = """
     你是 Apple Vision Pro 上的智能助手（SPATIAL·AI）。
     你可以通过摄像头画面和麦克风与用户自然对话。
-    每帧图像前会附带 [帧分析] 结构化数据，包含 YOLO 物体检测和人脸分析结果，供你参考。
-    请用中文简洁回答用户的问题，语言自然友好。
+
+    【视觉分析】
+    请主要依赖你自己对画面的视觉理解来描述和分析场景。
+    每帧图像前会附带 [帧分析] 结构化数据，包含 YOLO 物体检测和人脸表情分析结果。
+    这些数据仅作为辅助参考，帮助你了解物体的大致方位（左侧/正前方/右侧）和距离（米）。
+    不要直接复述 [帧分析] 的内容，而是用自然语言描述你看到的场景。
+
+    【回复风格】
+    用中文简洁回答，语言自然友好。描述环境时可以提及物体的空间位置关系。
     """
 
     /// 麻将模式：专注监听牌局动作，结构化输出打牌事件
@@ -174,7 +181,7 @@ public class AppModel: ObservableObject {
     """
 
     // MARK: - AI 服务
-    var activeProvider: AIProvider = .qwen
+    var activeProvider: AIProvider = .gemini
     var geminiService = GeminiLiveService(apiKey: AppModel.loadGeminiAPIKey())
     var qwenService = QwenOmniService(apiKey: AppModel.loadQwenAPIKey())
     var activeService: any RealtimeAIService {
@@ -191,11 +198,16 @@ public class AppModel: ObservableObject {
     var faceDetections: [FaceDetection] = []     // 当前帧人脸检测结果
     var aiLiveModelName: String = "yolo11n"       // 实际加载的 YOLO 模型名
 
-    // MARK: - 自动解说
-    var autoNarrate: Bool = false                          // 自动解说开关
-    var lastNarratedClasses: Set<String> = []              // 上次解说时的检测类别
-    var lastNarrationTime: Date = .distantPast             // 上次解说时间
-    let narrationCooldown: TimeInterval = 10               // 解说间隔（秒）
+    // MARK: - 自动解说（图像场景变化检测）
+    var autoNarrate: Bool = false                              // 自动解说开关
+    var lastSentThumbnail: CGImage?                            // 上次发送帧的缩略图（用于相似度比较）
+    var lastNarrationTime: Date = .distantPast                 // 上次解说时间
+    var lastNarratedLabels: Set<String> = []                   // 上次触发解说时的物体类别集合
+    let narrationCooldown: TimeInterval = 6                    // 解说间隔（秒）- 优化：从10秒降至6秒
+    let sceneChangeThreshold: Float = 0.04                     // MSE 阈值 - 优化：从0.08降至0.04，更灵敏
+
+    // MARK: - 会话录制
+    var sessionRecorder = SessionRecorder()
 
     // MARK: - 音频输入监测（波形 + 本地 STT）
     var audioInputMonitor = AudioInputMonitor()
@@ -231,7 +243,7 @@ public class AppModel: ObservableObject {
     }
 
     /// 从 Config.plist 读取 Gemini API Key
-    private static func loadGeminiAPIKey() -> String {
+    static func loadGeminiAPIKey() -> String {
         guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
               let data = try? Data(contentsOf: url),
               let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
@@ -244,7 +256,7 @@ public class AppModel: ObservableObject {
     }
 
     /// 从 Config.plist 读取 Qwen API Key
-    private static func loadQwenAPIKey() -> String {
+    static func loadQwenAPIKey() -> String {
         guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
               let data = try? Data(contentsOf: url),
               let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
