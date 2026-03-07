@@ -13,6 +13,7 @@ struct GeminiResponseView: View {
     @Bindable var appModel: AppModel
 
     @State private var dotPulse: Bool = false
+    @State private var spinAngle: Double = 0
 
     private var service: any RealtimeAIService {
         appModel.activeService
@@ -71,7 +72,24 @@ struct GeminiResponseView: View {
                 .background(Color.hudCyan.opacity(0.3))
 
             // 状态提示
-            if appModel.isGeminiActive {
+            if appModel.isGeminiActive && service.connectionState == .connecting {
+                // 连接中：旋转指示器
+                HStack(spacing: 8) {
+                    Circle()
+                        .trim(from: 0.15, to: 0.85)
+                        .stroke(Color.hudAmber, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .frame(width: 14, height: 14)
+                        .rotationEffect(.degrees(spinAngle))
+                        .onAppear {
+                            withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+                                spinAngle = 360
+                            }
+                        }
+                    Text("ESTABLISHING CONNECTION...")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color.hudAmber)
+                }
+            } else if appModel.isGeminiActive {
                 if service.isModelSpeaking {
                     HStack(spacing: 6) {
                         Text("▶")
@@ -140,25 +158,50 @@ struct GeminiResponseView: View {
 
             // 按钮区域
             HStack(spacing: 8) {
+                // 自动解说开关
+                Button {
+                    appModel.autoNarrate.toggle()
+                } label: {
+                    Text(appModel.autoNarrate ? "◉ AUTO" : "○ AUTO")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .frame(width: 80)
+                        .padding(.vertical, 6)
+                        .background(appModel.autoNarrate ? Color.hudAmber.opacity(0.2) : Color.clear)
+                        .foregroundColor(appModel.autoNarrate ? Color.hudAmber : Color.hudCyan.opacity(0.5))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(appModel.autoNarrate ? Color.hudAmber.opacity(0.7) : Color.hudCyan.opacity(0.3), lineWidth: 1)
+                        )
+                        .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+                .disabled(!appModel.isGeminiActive || service.connectionState != .connected)
+
                 Button {
                     appModel.toggleGeminiSession()
                 } label: {
-                    HStack {
-                        Text(appModel.isGeminiActive ? "■ STOP" : "▶ START")
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    HStack(spacing: 8) {
+                        if service.connectionState == .connecting {
+                            // 连接中：旋转环 + CANCEL 提示
+                            Circle()
+                                .trim(from: 0.15, to: 0.85)
+                                .stroke(Color.hudAmber, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                                .frame(width: 12, height: 12)
+                                .rotationEffect(.degrees(spinAngle))
+                            Text("CONNECTING  //  TAP TO CANCEL")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        } else {
+                            Text(appModel.isGeminiActive ? "■ STOP" : "▶ START")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
-                    .background(appModel.isGeminiActive
-                                ? Color.red.opacity(0.25)
-                                : Color.hudCyan.opacity(0.15))
-                    .foregroundColor(appModel.isGeminiActive ? Color.red : Color.hudCyan)
+                    .background(buttonBackground)
+                    .foregroundColor(buttonForeground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 3)
-                            .stroke(appModel.isGeminiActive
-                                    ? Color.red.opacity(0.7)
-                                    : Color.hudCyan.opacity(0.6),
-                                    lineWidth: 1)
+                            .stroke(buttonBorder, lineWidth: 1)
                     )
                     .cornerRadius(3)
                 }
@@ -204,6 +247,27 @@ struct GeminiResponseView: View {
     }
 
     // MARK: - Computed Properties
+
+    private var buttonBackground: Color {
+        switch service.connectionState {
+        case .connecting: return Color.hudAmber.opacity(0.12)
+        default: return appModel.isGeminiActive ? Color.red.opacity(0.25) : Color.hudCyan.opacity(0.15)
+        }
+    }
+
+    private var buttonForeground: Color {
+        switch service.connectionState {
+        case .connecting: return Color.hudAmber
+        default: return appModel.isGeminiActive ? Color.red : Color.hudCyan
+        }
+    }
+
+    private var buttonBorder: Color {
+        switch service.connectionState {
+        case .connecting: return Color.hudAmber.opacity(0.7)
+        default: return appModel.isGeminiActive ? Color.red.opacity(0.7) : Color.hudCyan.opacity(0.6)
+        }
+    }
 
     private var showRetryButton: Bool {
         switch service.connectionState {

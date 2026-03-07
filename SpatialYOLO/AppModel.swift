@@ -153,12 +153,12 @@ public class AppModel: ObservableObject {
 
     // MARK: - 各模式独立系统提示词
 
-    /// AI Live 模式：通用视觉助手，负责观察环境、回答问题
+    /// AI Live 模式：通用智能助手，可视觉感知并自然对话
     static let aiLiveSystemInstruction = """
-    你是 Apple Vision Pro 上的智能视觉助手（SPATIAL·AI v2.0）。通过摄像头实时观察用户周围的环境。
-    你的能力：描述所见场景和物体、回答用户关于环境的问题、提供实用建议。
-    每帧画面之前会附带结构化检测数据（[帧分析]标签），包含 YOLO 物体检测结果和人脸表情分析，请综合图像和结构化数据来回答。
-    要求：始终用中文回答，语言简洁自然，不超过3句话。
+    你是 Apple Vision Pro 上的智能助手（SPATIAL·AI）。
+    你可以通过摄像头画面和麦克风与用户自然对话。
+    每帧图像前会附带 [帧分析] 结构化数据，包含 YOLO 物体检测和人脸分析结果，供你参考。
+    请用中文简洁回答用户的问题，语言自然友好。
     """
 
     /// 麻将模式：专注监听牌局动作，结构化输出打牌事件
@@ -190,6 +190,15 @@ public class AppModel: ObservableObject {
     // MARK: - AI Live 增强
     var faceDetections: [FaceDetection] = []     // 当前帧人脸检测结果
     var aiLiveModelName: String = "yolo11n"       // 实际加载的 YOLO 模型名
+
+    // MARK: - 自动解说
+    var autoNarrate: Bool = false                          // 自动解说开关
+    var lastNarratedClasses: Set<String> = []              // 上次解说时的检测类别
+    var lastNarrationTime: Date = .distantPast             // 上次解说时间
+    let narrationCooldown: TimeInterval = 10               // 解说间隔（秒）
+
+    // MARK: - 音频输入监测（波形 + 本地 STT）
+    var audioInputMonitor = AudioInputMonitor()
 
     // MARK: - 麻将牌型分析服务（独立 LLM）
     var mahjongAnalysisService = MahjongAnalysisService(apiKey: AppModel.loadQwenAPIKey())
@@ -887,10 +896,10 @@ public class AppModel: ObservableObject {
             }
 
             // Gemini Live / 麻将模式：定时采样帧发送给 AI 服务
-            // geminiLive: 2 秒/帧，mahjong: 5 秒/帧（麻将牌静止，降低带宽）
+            // geminiLive: 1 秒/帧（主动感知模式需要更频繁的视觉输入），mahjong: 5 秒/帧
             if (activeFeature == .geminiLive || activeFeature == .mahjong),
                isGeminiActive, let leftBuffer = self.pixelBufferLeft {
-                let frameInterval: TimeInterval = (activeFeature == .mahjong) ? 5.0 : 2.0
+                let frameInterval: TimeInterval = (activeFeature == .mahjong) ? 5.0 : 1.0
                 let timeSinceLastGemini = currentTime.timeIntervalSince(lastGeminiSendTime)
                 if timeSinceLastGemini >= frameInterval {
                     lastGeminiSendTime = currentTime

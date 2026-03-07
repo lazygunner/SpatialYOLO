@@ -4,6 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>micro phone</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>实时本地语音转文字，用于显示环境对话字幕</string>
 	<key>NSMainCameraUsageDescription</key>
 	<string>main camera</string>
 	<key>NSWorldSensingUsageDescription</key>

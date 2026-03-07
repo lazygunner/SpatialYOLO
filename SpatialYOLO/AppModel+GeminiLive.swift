@@ -29,6 +29,18 @@ extension AppModel {
         activeService.systemInstruction = instruction
         print("[AI] 注入系统提示词 (模式:\(activeFeature)，长度:\(instruction.count))")
 
+        // Gemini 会话过期时自动重连
+        geminiService.onSessionExpired = { [weak self] in
+            guard let self = self, self.isGeminiActive else { return }
+            print("[AI] 会话过期，2秒后自动重连...")
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self = self, self.isGeminiActive else { return }
+                print("[AI] 正在自动重连...")
+                self.activeService.connect()
+            }
+        }
+
         // 麻将模式下设置 Qwen 打牌事件回调
         if activeFeature == .mahjong {
             qwenService.onDiscardEvent = { [weak self] event in
@@ -39,12 +51,22 @@ extension AppModel {
         }
 
         activeService.connect()
+
+        // 自动启动本地 STT（geminiLive / spatialYOLO 模式）
+        if activeFeature != .mahjong && !audioInputMonitor.isActive {
+            audioInputMonitor.toggle()
+        }
     }
 
     /// 停止 AI Live 会话
     func stopGeminiSession() {
         isGeminiActive = false
         activeService.disconnect()
+
+        // 停止本地 STT
+        if audioInputMonitor.isActive {
+            audioInputMonitor.toggle()
+        }
     }
 
     /// 切换 AI Live 会话状态
@@ -118,6 +140,36 @@ extension AppModel {
 
         // 在主线程构建检测上下文（需要访问主线程属性）
         let contextText = buildDetectionContext()
+        print("[帧分析] \(contextText)")
+
+        // 自动解说：检测场景变化并触发 AI 解说
+        var shouldNarrate = false
+        if autoNarrate {
+            let currentClasses = Set(detectedClassesLeft)
+            let now = Date()
+            let timeSinceLastNarration = now.timeIntervalSince(lastNarrationTime)
+
+            if timeSinceLastNarration >= narrationCooldown {
+                // 计算类别变化率
+                let added = currentClasses.subtracting(lastNarratedClasses)
+                let removed = lastNarratedClasses.subtracting(currentClasses)
+                let totalUnique = currentClasses.union(lastNarratedClasses)
+                let changeCount = added.count + removed.count
+
+                // 首次检测到物体，或变化超过 30%
+                let significantChange = !currentClasses.isEmpty && (
+                    lastNarratedClasses.isEmpty ||
+                    (totalUnique.count > 0 && Float(changeCount) / Float(totalUnique.count) > 0.3)
+                )
+
+                if significantChange {
+                    shouldNarrate = true
+                    lastNarratedClasses = currentClasses
+                    lastNarrationTime = now
+                    print("[自动解说] 场景变化: +\(added) -\(removed)，触发解说")
+                }
+            }
+        }
 
         // CIImage 是轻量惰性对象，主线程创建安全且会 retain pixelBuffer
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
@@ -157,6 +209,11 @@ extension AppModel {
                   let jpegData = UIImage(cgImage: resizedCGImage).jpegData(compressionQuality: 0.8) else { return }
 
             service.sendVideoFrame(jpegData: jpegData)
+
+            // 场景有变化时，发送帧后触发 AI 解说
+            if shouldNarrate {
+                service.sendTextMessage("请简要描述你现在看到的画面内容。")
+            }
         }
     }
 

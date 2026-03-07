@@ -25,6 +25,9 @@ class GeminiLiveService: RealtimeAIService {
     var responseHistory: [String] = []     // 历史响应记录
     var isModelSpeaking: Bool = false      // 模型是否正在生成
 
+    /// 会话过期回调（超时或 goAway），用于外部触发自动重连
+    var onSessionExpired: (() -> Void)?
+
     // MARK: - 会话管理
 
     var sessionStartTime: Date?
@@ -33,6 +36,13 @@ class GeminiLiveService: RealtimeAIService {
     // MARK: - 系统提示词（由外部注入，各模式独立）
 
     var systemInstruction: String = ""
+
+    // MARK: - 双语翻译字幕（当前回合解析结果）
+
+    var subtitleChinese: String = ""   // 当前翻译的中文行
+    var subtitleEnglish: String = ""   // 当前翻译的英文行
+    private var currentTurnRawText: String = ""      // 当前 turn 的原始累积文本
+    private var isNewTurnForSubtitle: Bool = true    // 是否是新 turn 的开始
 
     // MARK: - Private
 
@@ -107,8 +117,10 @@ class GeminiLiveService: RealtimeAIService {
         // 开始接收消息
         startReceiving()
 
-        // 启动音频引擎
-        setupAudioEngine()
+        // 启动音频引擎（后台线程执行，避免 AVAudioSession.setActive 阻塞主线程）
+        Task.detached { [weak self] in
+            self?.setupAudioEngine()
+        }
     }
 
     /// 断开 WebSocket 连接
@@ -131,6 +143,10 @@ class GeminiLiveService: RealtimeAIService {
         sessionStartTime = nil
         sessionRemainingSeconds = 120
         framesSent = 0
+        subtitleChinese = ""
+        subtitleEnglish = ""
+        currentTurnRawText = ""
+        isNewTurnForSubtitle = true
     }
 
     // MARK: - 发送消息
@@ -232,7 +248,7 @@ class GeminiLiveService: RealtimeAIService {
                                 "voiceName": "Zephyr"
                             ]
                         ]
-                    ]
+                    ],
                 ],
                 "outputAudioTranscription": [:],
                 "systemInstruction": [
@@ -345,8 +361,9 @@ class GeminiLiveService: RealtimeAIService {
 
         // 处理 goAway（服务器即将断开）
         if json["goAway"] != nil {
-            print("[GeminiLive] 服务器通知即将断开")
+            print("[GeminiLive] 服务器通知即将断开，将自动重连")
             disconnect()
+            onSessionExpired?()
             return
         }
 
@@ -363,17 +380,22 @@ class GeminiLiveService: RealtimeAIService {
            let parts = modelTurn["parts"] as? [[String: Any]] {
 
             for part in parts {
-                // 文字响应（包含 thought）
+                // 文字响应（思考过程，仅打印日志，不显示在 UI）
                 if let text = part["text"] as? String {
-                    responseText += text
                     isModelSpeaking = true
-                    print("[GeminiLive] 收到 text: \(text.prefix(100))")
+                    print("[GeminiLive] 收到 thought: \(text.prefix(200))")
                 }
 
                 // 音频转录
                 if let transcript = part["transcript"] as? String {
+                    if isNewTurnForSubtitle {
+                        currentTurnRawText = ""
+                        isNewTurnForSubtitle = false
+                    }
                     responseText += transcript
+                    currentTurnRawText += transcript
                     isModelSpeaking = true
+                    updateSubtitle()
                     print("[GeminiLive] 收到 transcript: \(transcript.prefix(100))")
                 }
 
@@ -389,12 +411,27 @@ class GeminiLiveService: RealtimeAIService {
             }
         }
 
+        // 处理 outputTranscription（模型语音转写，显示在 UI 上）
+        if let transcription = content["outputTranscription"] as? [String: Any],
+           let text = transcription["text"] as? String, !text.isEmpty {
+            responseText += text
+            currentTurnRawText += text
+            updateSubtitle()
+            print("[GeminiLive] 模型转写: \(text)")
+        }
+
+        // 处理 inputTranscription（用户语音转写，显示在 UI 上）
+        if let transcription = content["inputTranscription"] as? [String: Any],
+           let text = transcription["text"] as? String, !text.isEmpty {
+            responseText += "🗣 \(text)"
+            print("[GeminiLive] 用户转写: \(text)")
+        }
+
         // 检查 turnComplete
         if let turnComplete = content["turnComplete"] as? Bool, turnComplete {
             isModelSpeaking = false
+            isNewTurnForSubtitle = true  // 下次响应开始新字幕
             print("[GeminiLive] 回合完成, responseText长度: \(responseText.count)")
-            // 不清空 responseText，历史字幕持续保留
-            // 添加换行分隔符，后续回复 append 到后面
             if !responseText.isEmpty {
                 responseText += "\n"
             }
@@ -403,8 +440,21 @@ class GeminiLiveService: RealtimeAIService {
         // 检查是否被中断
         if let interrupted = content["interrupted"] as? Bool, interrupted {
             isModelSpeaking = false
+            isNewTurnForSubtitle = true
             print("[GeminiLive] 被中断")
         }
+    }
+
+    // MARK: - 字幕解析
+
+    /// 从当前 turn 原始文本中解析双语字幕（第一行中文，第二行英文）
+    private func updateSubtitle() {
+        let lines = currentTurnRawText
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        subtitleChinese = lines.count > 0 ? lines[0] : ""
+        subtitleEnglish = lines.count > 1 ? lines[1] : ""
     }
 
     // MARK: - 会话计时器
@@ -423,10 +473,12 @@ class GeminiLiveService: RealtimeAIService {
                     self.sessionRemainingSeconds = remaining
                 }
 
-                // 会话超时，自动断开
+                // 会话超时，自动断开并触发重连
                 if remaining <= 0 {
                     await MainActor.run {
+                        print("[GeminiLive] 会话超时，将自动重连")
                         self.disconnect()
+                        self.onSessionExpired?()
                     }
                     break
                 }
@@ -480,7 +532,6 @@ class GeminiLiveService: RealtimeAIService {
         }
         self.audioConverter = converter
 
-        // 安装 tap 捕获麦克风音频
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat) { [weak self] buffer, _ in
             self?.processAndSendMicAudio(buffer: buffer)
         }

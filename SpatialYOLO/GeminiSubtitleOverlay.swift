@@ -2,13 +2,15 @@
 //  GeminiSubtitleOverlay.swift
 //  SpatialYOLO
 //
-//  JARVIS HUD 风格 AI 字幕叠加层（打字机效果）
+//  AI 字幕叠加层：
+//    GeminiSubtitleOverlay      — HUD 风格实时转录（麻将模式使用）
+//    TranslationSubtitleOverlay — 双语翻译字幕（AI Live 模式使用）
 //
 
 import SwiftUI
 
 /// Gemini 回复字幕叠加层（HUD 风格）
-/// 以打字机效果逐字显示在视频画面底部，历史字幕持续保留
+/// 实时显示 AI 语音转写文本，自动滚动到最新内容
 struct GeminiSubtitleOverlay: View {
     let geminiService: any RealtimeAIService
 
@@ -16,14 +18,14 @@ struct GeminiSubtitleOverlay: View {
     private let videoWidth:  CGFloat = 960
     private let videoHeight: CGFloat = 540
 
-    /// 当前已显示的字符数（打字机进度，只增不减）
-    @State private var displayedCount: Int = 0
-    /// 打字机定时器
-    @State private var typewriterTask: Task<Void, Never>?
-
-    private let charInterval: TimeInterval = 0.04
+    /// 文本版本号（用于触发滚动）
+    @State private var textVersion: Int = 0
+    @State private var lastTextLength: Int = 0
+    @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
+        let text = geminiService.responseText
+
         VStack(alignment: .leading, spacing: 4) {
             // 标签头
             Text("AI TRANSCRIPT:")
@@ -34,21 +36,25 @@ struct GeminiSubtitleOverlay: View {
 
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
-                    Text(displayedText)
-                        .font(.system(size: 20, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color.hudCyan)
-                        .multilineTextAlignment(.leading)
-                        .lineSpacing(4)
-                        .frame(maxWidth: videoWidth * 0.8, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 10)
-                        .id("bottom")
-                }
-                .frame(maxWidth: videoWidth * 0.8, maxHeight: videoHeight * 0.2)
-                .onChange(of: displayedCount) {
-                    withAnimation(.linear(duration: 0.05)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(text)
+                            .font(.system(size: 20, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.hudCyan)
+                            .multilineTextAlignment(.leading)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: videoWidth * 0.8, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 10)
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id("anchor")
                     }
+                }
+                .frame(maxWidth: videoWidth * 0.8, maxHeight: videoHeight * 0.3)
+                .onChange(of: textVersion) {
+                    proxy.scrollTo("anchor", anchor: .bottom)
                 }
             }
         }
@@ -61,37 +67,80 @@ struct GeminiSubtitleOverlay: View {
                 )
         )
         .padding(.bottom, 16)
-        .opacity(displayedText.isEmpty ? 0 : 1)
+        .opacity(text.isEmpty ? 0 : 1)
         .onAppear {
-            startTypewriter()
+            startPolling()
+        }
+        .onDisappear {
+            pollTask?.cancel()
         }
     }
 
-    // MARK: - 打字机逻辑
-
-    private var displayedText: String {
-        let fullText = geminiService.responseText
-        guard !fullText.isEmpty, displayedCount > 0 else { return "" }
-        let count = min(displayedCount, fullText.count)
-        let endIndex = fullText.index(fullText.startIndex, offsetBy: count)
-        return String(fullText[fullText.startIndex..<endIndex])
-    }
-
-    private func startTypewriter() {
-        guard typewriterTask == nil else { return }
-        typewriterTask = Task { @MainActor in
+    /// 轮询检测文本变化（避免 any protocol 无法触发 onChange 的问题）
+    private func startPolling() {
+        pollTask = Task { @MainActor in
             while !Task.isCancelled {
-                let fullText = geminiService.responseText
-
-                if displayedCount >= fullText.count {
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                    continue
+                let currentLength = geminiService.responseText.count
+                if currentLength != lastTextLength {
+                    lastTextLength = currentLength
+                    textVersion += 1
                 }
-
-                displayedCount += 1
-                try? await Task.sleep(nanoseconds: UInt64(charInterval * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
             }
-            typewriterTask = nil
         }
+    }
+}
+
+// MARK: - 双语翻译字幕（AI Live 模式）
+
+/// 实时双语翻译字幕叠加层
+/// 显示 AI 翻译的中英双语内容：第一行中文、第二行英文
+/// 用于 AI Live 模式，字幕在画面底部醒目显示
+struct TranslationSubtitleOverlay: View {
+    let geminiService: any RealtimeAIService
+
+    var body: some View {
+        let chinese = geminiService.subtitleChinese
+        let english = geminiService.subtitleEnglish
+        let hasContent = !chinese.isEmpty || !english.isEmpty
+
+        VStack(spacing: 0) {
+            if hasContent {
+                VStack(alignment: .center, spacing: 8) {
+                    // 第一行：中文
+                    if !chinese.isEmpty {
+                        Text(chinese)
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // 第二行：英文
+                    if !english.isEmpty {
+                        Text(english)
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundColor(.white.opacity(0.88))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.black.opacity(0.72))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        )
+                )
+                .frame(maxWidth: 860)
+                .padding(.bottom, 20)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: chinese)
+        .animation(.easeInOut(duration: 0.25), value: english)
     }
 }

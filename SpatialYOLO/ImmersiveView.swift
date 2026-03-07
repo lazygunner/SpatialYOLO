@@ -16,6 +16,7 @@ struct ImmersiveView: View {
     @State private var rightCameraEntity: Entity?
     @State private var depthEntity: Entity?
     @State private var geminiBoundingBoxEntity: Entity?
+    @State private var translationSubtitleEntity: Entity?
     @State private var mahjongEntity: Entity?
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
@@ -79,22 +80,26 @@ struct ImmersiveView: View {
                 }
             }
 
-            // Gemini Live 附件：JARVIS HUD + 字幕叠加 + 控制面板
+            // Gemini Live 附件：JARVIS HUD + 音频监测 + 控制面板
             Attachment(id: "geminiBoundingBox") {
-                VStack(spacing: 8) {
-                    ZStack(alignment: .bottom) {
-                        // JARVIS HUD 覆盖层（自带相机画面 + 检测框 + 人脸卡 + telemetry）
-                        AILiveHUDView(model: appModel)
+                VStack(spacing: 6) {
+                    // JARVIS HUD 覆盖层（相机画面 + 检测框 + 人脸卡 + telemetry）
+                    AILiveHUDView(model: appModel)
 
-                        // AI 回复字幕（打字机效果，底部 20% 区域）
-                        GeminiSubtitleOverlay(geminiService: appModel.activeService)
-                    }
+                    // 环境语音监听：波形 + 本地 STT（独立开关）
+                    AudioMonitorView(monitor: appModel.audioInputMonitor)
+                        .frame(width: 960)
 
                     // 控制面板（HUD 风格）
                     GeminiResponseView(appModel: appModel)
 
                     exitButton
                 }
+            }
+
+            // 双语翻译字幕：独立悬浮在用户正前方偏下，与 HUD 面板分离
+            Attachment(id: "translationSubtitle") {
+                TranslationSubtitleOverlay(geminiService: appModel.activeService)
             }
         }
         .task {
@@ -136,12 +141,20 @@ struct ImmersiveView: View {
     // MARK: - Gemini Live 布局
 
     private func setupGeminiLive(anchor: AnchorEntity, attachments: RealityViewAttachments) {
-        // 摄像头画面 + 字幕 + 控制面板（居中）
+        // HUD 控制面板：稍偏左，轻微旋转，视线余光可见
         if let attachment = attachments.entity(for: "geminiBoundingBox") {
             geminiBoundingBoxEntity = attachment
             attachment.position = SIMD3<Float>(-0.2, -0.05, -0.5)
             attachment.transform.rotation = simd_quatf(angle: .pi / 8, axis: [0, 1, 0])
             attachment.transform.scale = [0.4, 0.4, 0.4]
+            anchor.addChild(attachment)
+        }
+
+        // 双语字幕：正前方居中、视野偏下，独立悬浮，无旋转
+        if let attachment = attachments.entity(for: "translationSubtitle") {
+            translationSubtitleEntity = attachment
+            attachment.position = SIMD3<Float>(0, -0.22, -0.65)
+            attachment.transform.scale = [0.45, 0.45, 0.45]
             anchor.addChild(attachment)
         }
     }

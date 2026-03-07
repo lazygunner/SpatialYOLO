@@ -38,6 +38,11 @@ class QwenOmniService: RealtimeAIService {
 
     var systemInstruction: String = ""
 
+    // MARK: - 双语翻译字幕（当前回合解析结果）
+
+    var subtitleChinese: String = ""   // 当前翻译的中文行
+    var subtitleEnglish: String = ""   // 当前翻译的英文行
+
     // MARK: - Private
 
     private let apiKey: String
@@ -96,6 +101,21 @@ class QwenOmniService: RealtimeAIService {
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 7500  // 120 分钟 + 余量
         let delegate = QwenWebSocketDelegate()
+        delegate.onOpen = { [weak self] in
+            guard let self = self else { return }
+            print("[QwenOmni] WebSocket 已打开，开始初始化会话...")
+
+            // 先开始接收消息，以便捕获服务端可能返回的 error 事件
+            self.startReceiving()
+
+            // WebSocket 连接确认打开后，才发送 session.update
+            self.sendSessionUpdate()
+
+            // 启动音频引擎（后台线程执行，避免 AVAudioSession.setActive 阻塞主线程）
+            Task.detached { [weak self] in
+                self?.setupAudioEngine()
+            }
+        }
         delegate.onError = { [weak self] message in
             DispatchQueue.main.async {
                 guard let self = self, self.connectionState == .connected || self.connectionState == .connecting else { return }
@@ -108,15 +128,6 @@ class QwenOmniService: RealtimeAIService {
 
         print("[QwenOmni] WebSocket task 创建完成，调用 resume()...")
         webSocketTask?.resume()
-
-        // 发送 session.update
-        sendSessionUpdate()
-
-        // 开始接收消息
-        startReceiving()
-
-        // 启动音频引擎
-        setupAudioEngine()
     }
 
     func disconnect() {
@@ -138,6 +149,9 @@ class QwenOmniService: RealtimeAIService {
         sessionRemainingSeconds = 7200
         framesSent = 0
         hasSentAudio = false
+        subtitleChinese = ""
+        subtitleEnglish = ""
+        currentTurnTranscript = ""
     }
 
     // MARK: - 发送消息
@@ -267,7 +281,7 @@ class QwenOmniService: RealtimeAIService {
     private func sendJSON(_ dict: [String: Any], completion: (() -> Void)? = nil) {
         let msgType = dict["type"] as? String ?? "unknown"
 
-        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys, .withoutEscapingSlashes]),
               let jsonString = String(data: data, encoding: .utf8) else {
             print("[QwenOmni] JSON 序列化失败 (type=\(msgType))")
             completion?()
@@ -379,6 +393,7 @@ class QwenOmniService: RealtimeAIService {
                 responseText += delta
                 currentTurnTranscript += delta
                 isModelSpeaking = true
+                updateSubtitleFromTranscript()
                 print("[QwenOmni] transcript: \(delta.prefix(50))")
             }
 
@@ -388,6 +403,7 @@ class QwenOmniService: RealtimeAIService {
                 responseText += delta
                 currentTurnTranscript += delta
                 isModelSpeaking = true
+                updateSubtitleFromTranscript()
                 print("[QwenOmni] text: \(delta.prefix(50))")
             }
 
@@ -637,6 +653,18 @@ class QwenOmniService: RealtimeAIService {
 
         player.scheduleBuffer(buffer, completionHandler: nil)
     }
+    // MARK: - 字幕解析
+
+    /// 从当前 turn 转录文本中解析双语字幕（第一行中文，第二行英文）
+    private func updateSubtitleFromTranscript() {
+        let lines = currentTurnTranscript
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        subtitleChinese = lines.count > 0 ? lines[0] : ""
+        subtitleEnglish = lines.count > 1 ? lines[1] : ""
+    }
+
     // MARK: - 打牌事件解析
 
     /// 从 Omni 的转录文本中提取结构化打牌事件
@@ -677,10 +705,12 @@ class QwenOmniService: RealtimeAIService {
 
 private class QwenWebSocketDelegate: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate {
 
+    var onOpen: (() -> Void)?
     var onError: ((String) -> Void)?
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        print("[QwenOmni] WebSocket 已打开")
+        print("[QwenOmni] WebSocket 已打开 (delegate)")
+        onOpen?()
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
