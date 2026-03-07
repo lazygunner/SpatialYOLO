@@ -24,6 +24,7 @@ struct ProjectDetailView: View {
             // 顶部导航栏
             HStack {
                 Button {
+                    NotificationCenter.default.post(name: .refreshProjectList, object: nil)
                     dismiss()
                 } label: {
                     HStack(spacing: 4) {

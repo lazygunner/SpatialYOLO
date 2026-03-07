@@ -64,6 +64,14 @@ class SessionRecorder {
     func stopSession() {
         guard isRecording, let dir = sessionDir else { return }
 
+        // --- 核心变更：如果没有照片帧，则不保存会话 ---
+        if frameCount == 0 {
+            print("[录制] 会话内无照片帧，放弃保存: \(sessionID)")
+            try? FileManager.default.removeItem(at: dir)
+            isRecording = false
+            return
+        }
+
         // 更新元数据
         let metaFile = dir.appendingPathComponent("session.json")
         if var meta = loadJSON(from: metaFile) {
@@ -84,8 +92,7 @@ class SessionRecorder {
         isRecording = false
         print("[录制] 会话结束: \(sessionID), 共 \(frameCount) 帧")
         
-        // --- 核心变更：自动开始后台异步处理 ---
-        // 我们创建一个新的 SessionInfo 对象并直接触发处理
+        // --- 自动开始后台异步处理 ---
         let finalSession = SessionInfo(
             id: sessionID,
             directory: dir,

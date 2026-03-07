@@ -80,6 +80,10 @@ struct ProjectListView: View {
         .onAppear {
             refreshData()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .refreshProjectList)) { _ in
+            print("[列表] 收到刷新通知，更新数据...")
+            refreshData()
+        }
     }
 
     private func deleteSession(_ session: SessionInfo) {

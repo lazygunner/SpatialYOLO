@@ -74,6 +74,7 @@ extension AppModel {
         // 停止录制并重置场景状态
         sessionRecorder.stopSession()
         lastSentThumbnail = nil
+        isVoiceSamplingActive = false
     }
 
     /// 切换 AI Live 会话状态
@@ -179,7 +180,6 @@ extension AppModel {
         let currentResponseText = self.activeService.responseText
 
         let currentLabelsCapture = Set(self.detectedClassesLeft)
-        let lastLabelsCapture = self.lastNarratedLabels
 
         // 重型压缩工作放到后台线程
         Task.detached { [weak self] in
@@ -225,41 +225,33 @@ extension AppModel {
             if shouldAutoNarrate {
                 let now = Date()
                 if now.timeIntervalSince(lastNarTime) >= cooldown {
-                    // 触发器 1：检测到的物体标签发生显著变化（新物体出现或消失）
-                    let added = currentLabelsCapture.subtracting(lastLabelsCapture)
-                    let removed = lastLabelsCapture.subtracting(currentLabelsCapture)
-                    
-                    if !added.isEmpty || !removed.isEmpty {
-                        shouldNarrate = true
-                        print("[自动解说] 物体变化: +\(added), -\(removed)，触发解说")
-                    } else {
-                        // 触发器 2：像素级变化检测 (MSE)
-                        let thumbSize = 64
-                        if let thumbCtx = CGContext(
-                            data: nil, width: thumbSize, height: thumbSize,
-                            bitsPerComponent: 8, bytesPerRow: thumbSize * 4,
-                            space: colorSpace,
-                            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-                        ) {
-                            thumbCtx.interpolationQuality = .low
-                            thumbCtx.draw(cgImage, in: CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize))
+                    // 仅使用像素级变化检测 (MSE)
+                    let thumbSize = 64
+                    let colorSpaceRef = CGColorSpaceCreateDeviceRGB()
+                    if let thumbCtx = CGContext(
+                        data: nil, width: thumbSize, height: thumbSize,
+                        bitsPerComponent: 8, bytesPerRow: thumbSize * 4,
+                        space: colorSpaceRef,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+                    ) {
+                        thumbCtx.interpolationQuality = .low
+                        thumbCtx.draw(cgImage, in: CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize))
 
-                            if let currentThumb = thumbCtx.makeImage() {
-                                if let prevThumb = lastThumb {
-                                    let mse = SessionRecorder.computeImageMSE(prevThumb, currentThumb, size: thumbSize)
-                                    if mse > threshold {
-                                        shouldNarrate = true
-                                        print("[自动解说] 场景变化 MSE=\(String(format: "%.4f", mse))，触发解说")
-                                    }
-                                } else {
-                                    // 首帧，触发初始解说
+                        if let currentThumb = thumbCtx.makeImage() {
+                            if let prevThumb = lastThumb {
+                                let mse = SessionRecorder.computeImageMSE(prevThumb, currentThumb, size: thumbSize)
+                                if mse > threshold {
                                     shouldNarrate = true
-                                    print("[自动解说] 首帧，触发初始解说")
+                                    print("[自动解说] 场景变化 MSE=\(String(format: "%.4f", mse))，触发解说")
                                 }
-                                
-                                await MainActor.run {
-                                    self?.lastSentThumbnail = currentThumb
-                                }
+                            } else {
+                                // 首帧，触发初始解说
+                                shouldNarrate = true
+                                print("[自动解说] 首帧，触发初始解说")
+                            }
+                            
+                            await MainActor.run {
+                                self?.lastSentThumbnail = currentThumb
                             }
                         }
                     }
@@ -267,7 +259,6 @@ extension AppModel {
                     if shouldNarrate {
                         await MainActor.run {
                             self?.lastNarrationTime = now
-                            self?.lastNarratedLabels = currentLabelsCapture
                         }
                     }
                 }

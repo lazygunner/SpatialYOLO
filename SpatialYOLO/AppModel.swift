@@ -202,9 +202,9 @@ public class AppModel: ObservableObject {
     var autoNarrate: Bool = false                              // 自动解说开关
     var lastSentThumbnail: CGImage?                            // 上次发送帧的缩略图（用于相似度比较）
     var lastNarrationTime: Date = .distantPast                 // 上次解说时间
-    var lastNarratedLabels: Set<String> = []                   // 上次触发解说时的物体类别集合
     let narrationCooldown: TimeInterval = 6                    // 解说间隔（秒）- 优化：从10秒降至6秒
     let sceneChangeThreshold: Float = 0.04                     // MSE 阈值 - 优化：从0.08降至0.04，更灵敏
+    var isVoiceSamplingActive: Bool = false                    // 非 Auto 模式下，是否因为检测到语音而激活采集
 
     // MARK: - 会话录制
     var sessionRecorder = SessionRecorder()
@@ -908,15 +908,47 @@ public class AppModel: ObservableObject {
             }
 
             // Gemini Live / 麻将模式：定时采样帧发送给 AI 服务
-            // geminiLive: 1 秒/帧（主动感知模式需要更频繁的视觉输入），mahjong: 5 秒/帧
+            // geminiLive: 在 Auto 模式或检测到语音时发送，1 秒/帧；mahjong: 5 秒/帧
             if (activeFeature == .geminiLive || activeFeature == .mahjong),
                isGeminiActive, let leftBuffer = self.pixelBufferLeft {
+                
                 let frameInterval: TimeInterval = (activeFeature == .mahjong) ? 5.0 : 1.0
                 let timeSinceLastGemini = currentTime.timeIntervalSince(lastGeminiSendTime)
+                
                 if timeSinceLastGemini >= frameInterval {
-                    lastGeminiSendTime = currentTime
-                    print("[帧采样] 发送视频帧 (间隔\(Int(frameInterval))s, 模式:\(activeFeature))")
-                    sendFrameToGemini(leftBuffer)
+                    var shouldSend = false
+                    
+                    if activeFeature == .mahjong {
+                        shouldSend = true
+                    } else if autoNarrate {
+                        // Auto 模式：始终开启采样，由内部 MSE/标签逻辑决定是否真正触发语音解说
+                        shouldSend = true
+                    } else {
+                        // 非 Auto 模式：语音触发逻辑
+                        // 1. 如果检测到用户在说话 (RMS > 0.05)，激活采样
+                        if audioInputMonitor.inputLevel > 0.05 {
+                            if !isVoiceSamplingActive {
+                                print("[采样] 检测到语音，开启视频采集")
+                                isVoiceSamplingActive = true
+                            }
+                        }
+                        
+                        // 2. 如果 AI 开始说话，停止采样
+                        if activeService.isModelSpeaking {
+                            if isVoiceSamplingActive {
+                                print("[采样] AI 开始响应，停止视频采集")
+                                isVoiceSamplingActive = false
+                            }
+                        }
+                        
+                        shouldSend = isVoiceSamplingActive
+                    }
+
+                    if shouldSend {
+                        lastGeminiSendTime = currentTime
+                        print("[帧采样] 发送视频帧 (采样激活, 模式:\(activeFeature))")
+                        sendFrameToGemini(leftBuffer)
+                    }
                 }
             }
         }

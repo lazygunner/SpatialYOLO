@@ -173,29 +173,25 @@ struct GeminiResponseView: View {
                     .buttonStyle(.plain)
                 }
 
-                // 自动解说开关
-                Button {
-                    appModel.autoNarrate.toggle()
-                } label: {
-                    Text(appModel.autoNarrate ? "◉ AUTO" : "○ AUTO")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .frame(width: 80)
-                        .padding(.vertical, 6)
-                        .background(appModel.autoNarrate ? Color.hudAmber.opacity(0.2) : Color.clear)
-                        .foregroundColor(appModel.autoNarrate ? Color.hudAmber : Color.hudCyan.opacity(0.5))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(appModel.autoNarrate ? Color.hudAmber.opacity(0.7) : Color.hudCyan.opacity(0.3), lineWidth: 1)
-                        )
-                        .cornerRadius(3)
-                        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 3))
+                // 自动解说开关 (Switch)
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Auto 模式", isOn: $appModel.autoNarrate)
+                        .toggleStyle(.switch)
+                        .tint(.hudAmber)
+                        .disabled(!appModel.isGeminiActive || service.connectionState != .connected)
+                        .scaleEffect(0.8)
+                        .frame(width: 140, alignment: .leading)
+                        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 8))
                         .hoverEffect()
+                    
+                    Text("Auto 模式自动检测环境变化 / Manual 模式需要人工询问")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.hudAmber.opacity(0.6))
+                        .padding(.leading, 2)
                 }
-                .buttonStyle(.plain)
-                .disabled(!appModel.isGeminiActive || service.connectionState != .connected)
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .padding(.bottom, 12)
         }
         .padding(.vertical, 8)
         .frame(width: 960, height: 180)
