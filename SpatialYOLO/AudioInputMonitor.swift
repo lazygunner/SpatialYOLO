@@ -20,6 +20,7 @@ class AudioInputMonitor {
     // MARK: - 状态
 
     var isActive: Bool = false   // 用户手动开关
+    var language: AppModel.AppLanguage = .chinese // 当前识别语言
 
     // MARK: - 波形数据（主线程，60 条振幅历史）
 
@@ -197,8 +198,10 @@ class AudioInputMonitor {
 
     private func startRecognition() {
         let recognizer: SFSpeechRecognizer?
-        if let zh = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN")), zh.isAvailable {
-            recognizer = zh
+        let localeId = (language == .english) ? "en-US" : "zh-CN"
+        
+        if let target = SFSpeechRecognizer(locale: Locale(identifier: localeId)), target.isAvailable {
+            recognizer = target
         } else if let sys = SFSpeechRecognizer(), sys.isAvailable {
             recognizer = sys
         } else {

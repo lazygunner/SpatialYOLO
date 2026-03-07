@@ -12,6 +12,7 @@ import SwiftUI
 /// Gemini 回复字幕叠加层（HUD 风格）
 /// 实时显示 AI 语音转写文本，自动滚动到最新内容
 struct GeminiSubtitleOverlay: View {
+    @EnvironmentObject var appModel: AppModel
     let geminiService: any RealtimeAIService
 
     /// 视频区域尺寸（固定 960×540）
@@ -28,7 +29,7 @@ struct GeminiSubtitleOverlay: View {
 
         VStack(alignment: .leading, spacing: 4) {
             // 标签头
-            Text("AI TRANSCRIPT:")
+            Text(appModel.language == .english ? "AI TRANSCRIPT:" : "AI 对话转录:")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(Color.hudCyan.opacity(0.7))
                 .padding(.horizontal, 12)

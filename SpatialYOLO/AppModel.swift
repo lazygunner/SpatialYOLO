@@ -33,6 +33,25 @@ public class AppModel: ObservableObject {
         case mahjong        // 麻将牌检测 + AI 助手
     }
     var activeFeature: FeatureMode = .spatialYOLO
+    
+    /// 语言模式
+    enum AppLanguage: String, CaseIterable, Identifiable {
+        case chinese = "中文"
+        case english = "English"
+        var id: String { self.rawValue }
+    }
+    var language: AppLanguage = .chinese {
+        didSet {
+            audioInputMonitor.language = language
+            // 如果 STT 正在运行，切换语言时需要重启识别器以应用新的 Locale
+            if audioInputMonitor.isActive {
+                print("[Language] 语言切换为 \(language)，重启 STT...")
+                // 触发内部重启逻辑
+                audioInputMonitor.toggle()
+                audioInputMonitor.toggle()
+            }
+        }
+    }
 
     var selectedTab = 0
     
@@ -151,34 +170,67 @@ public class AppModel: ObservableObject {
         set { requestsLeft = newValue }
     }
 
-    // MARK: - 各模式独立系统提示词
+    // MARK: - 各模式独立系统提示词 (多语言支持)
+    
+    /// 获取当前语言下的 AI Live 系统提示词
+    func aiLiveSystemInstruction() -> String {
+        if language == .english {
+            return """
+            You are an intelligent assistant (SPATIAL·AI) on Apple Vision Pro.
+            You can interact naturally with users through camera frames and microphone input.
 
-    /// AI Live 模式：通用智能助手，可视觉感知并自然对话
-    static let aiLiveSystemInstruction = """
-    你是 Apple Vision Pro 上的智能助手（SPATIAL·AI）。
-    你可以通过摄像头画面和麦克风与用户自然对话。
+            【Visual Analysis】
+            Focus on your own visual understanding to describe and analyze the scene.
+            Each frame is preceded by [Frame Analysis] structured data containing YOLO detections and facial expression analysis.
+            This data is for spatial reference only (location and distance).
+            Do NOT simply repeat the [Frame Analysis] data. Describe the scene in a natural, human-like way.
 
-    【视觉分析】
-    请主要依赖你自己对画面的视觉理解来描述和分析场景。
-    每帧图像前会附带 [帧分析] 结构化数据，包含 YOLO 物体检测和人脸表情分析结果。
-    这些数据仅作为辅助参考，帮助你了解物体的大致方位（左侧/正前方/右侧）和距离（米）。
-    不要直接复述 [帧分析] 的内容，而是用自然语言描述你看到的场景。
+            【Response Style】
+            Answer concisely in English. Be natural and friendly. Mention spatial relationships between objects when describing the environment.
+            """
+        } else {
+            return """
+            你是 Apple Vision Pro 上的智能助手（SPATIAL·AI）。
+            你可以通过摄像头画面和麦克风与用户自然对话。
 
-    【回复风格】
-    用中文简洁回答，语言自然友好。描述环境时可以提及物体的空间位置关系。
-    """
+            【视觉分析】
+            请主要依赖你自己对画面的视觉理解来描述和分析场景。
+            每帧图像前会附带 [帧分析] 结构化数据，包含 YOLO 物体检测和人脸表情分析结果。
+            这些数据仅作为辅助参考，帮助你了解物体的大致方位（左侧/正前方/右侧）和距离（米）。
+            不要直接复述 [帧分析] 的内容，而是用自然语言描述你看到的场景。
 
-    /// 麻将模式：专注监听牌局动作，结构化输出打牌事件
-    static let mahjongSystemInstruction = """
-    你是麻将牌局语音监听助手，通过 Apple Vision Pro 旁听牌局。
-    核心任务：仔细听取周围玩家的声音，识别报牌和动作，区分玩家A/B/C。
-    每当检测到打牌动作，必须用以下格式逐行输出（不得省略）：
-    [玩家A] 打 三万
-    [玩家B] 碰
-    [玩家C] 杠 东风
-    [玩家A] 胡
-    规则：只输出打牌相关信息，忽略闲聊；初始静默监听，不主动发言；极简中文。
-    """
+            【回复风格】
+            用中文简洁回答，语言自然友好。描述环境时可以提及物体的空间位置关系。
+            """
+        }
+    }
+
+    /// 获取当前语言下的麻将模式系统提示词
+    func mahjongSystemInstruction() -> String {
+        if language == .english {
+            return """
+            You are a Mahjong game audio assistant, observing the game through Apple Vision Pro.
+            Core Task: Listen to nearby players, identify tile discards and actions, and distinguish between Players A, B, and C.
+            Whenever a move is detected, output using the following format line by line:
+            [Player A] Discard 3-Character
+            [Player B] Pong
+            [Player C] Kong East Wind
+            [Player A] Mahjong (Win)
+            Rules: Only output game-related info. Ignore small talk. Stay silent initially. Respond in concise English.
+            """
+        } else {
+            return """
+            你是麻将牌局语音监听助手，通过 Apple Vision Pro 旁听牌局。
+            核心任务：仔细听取周围玩家的声音，识别报牌和动作，区分玩家A/B/C。
+            每当检测到打牌动作，必须用以下格式逐行输出（不得省略）：
+            [玩家A] 打 三万
+            [玩家B] 碰
+            [玩家C] 杠 东风
+            [玩家A] 胡
+            规则：只输出打牌相关信息，忽略闲聊；初始静默监听，不主动发言；极简中文。
+            """
+        }
+    }
 
     // MARK: - AI 服务
     var activeProvider: AIProvider = .gemini

@@ -17,17 +17,11 @@ extension AppModel {
         isGeminiActive = true
 
         // 根据当前模式注入独立的系统提示词
-        let instruction: String
-        switch activeFeature {
-        case .mahjong:
-            instruction = AppModel.mahjongSystemInstruction
-        case .geminiLive:
-            instruction = AppModel.aiLiveSystemInstruction
-        case .spatialYOLO:
-            instruction = AppModel.aiLiveSystemInstruction
-        }
-        activeService.systemInstruction = instruction
-        print("[AI] 注入系统提示词 (模式:\(activeFeature)，长度:\(instruction.count))")
+        let instruction = (activeFeature == .mahjong) ? aiLiveSystemInstruction() : aiLiveSystemInstruction()
+        // 修正逻辑：由于 mahjongSystemInstruction 被命名为 mahjong... 我需要纠正这里的调用
+        let finalInstruction = (activeFeature == .mahjong) ? mahjongSystemInstruction() : aiLiveSystemInstruction()
+        activeService.systemInstruction = finalInstruction
+        print("[AI] 注入系统提示词 (模式:\(activeFeature)，语言:\(language)，长度:\(finalInstruction.count))")
 
         // Gemini 会话过期时自动重连
         geminiService.onSessionExpired = { [weak self] in

@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    var appModel: AppModel
+    @Bindable var appModel: AppModel
 
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
@@ -17,21 +17,40 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部标题
-            VStack(spacing: 6) {
-                Text("SpatialYOLO")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [.blue, .purple, .pink],
-                            startPoint: .leading,
-                            endPoint: .trailing
+            // 顶部标题 + 语言切换
+            HStack(alignment: .top) {
+                Spacer()
+                
+                VStack(spacing: 6) {
+                    Text("SpatialYOLO")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.blue, .purple, .pink],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
                         )
-                    )
 
-                Text("空间智能视觉平台")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    Text(appModel.language == .english ? "Spatial Intelligence Platform" : "空间智能视觉平台")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.leading, 120) // 给右侧 Picker 留出平衡空间
+                
+                Spacer()
+                
+                // 语言切换器
+                Picker("", selection: $appModel.language) {
+                    ForEach(AppModel.AppLanguage.allCases) { lang in
+                        Text(lang.rawValue).tag(lang)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+                .padding(.top, 10)
+                .padding(.trailing, 20)
+                .tint(.hudAmber)
             }
             .padding(.top, 24)
             .padding(.bottom, 20)
@@ -39,9 +58,11 @@ struct ContentView: View {
             // AI Live 卡片（支持 Gemini / Qwen）
             FeatureCard(
                 icon: "sparkles",
-                title: "Live AI Agent",
-                subtitle: "交互式视觉助手",
-                description: "实时画面+语音双向对话，保存日常记忆",
+                title: appModel.language == .english ? "Live AI Agent" : "Live AI Agent",
+                subtitle: appModel.language == .english ? "Interactive Visual Assistant" : "交互式视觉助手",
+                description: appModel.language == .english 
+                    ? "Real-time visual + voice dialogue, saving daily memories" 
+                    : "实时画面+语音双向对话，保存日常记忆",
                 gradient: LinearGradient(
                     colors: [
                         Color.purple.opacity(0.6),
@@ -75,10 +96,18 @@ struct ContentView: View {
                         .fill(.green)
                         .frame(width: 8, height: 8)
                     Text({
-                        switch appModel.activeFeature {
-                        case .spatialYOLO: return "Spatial YOLO 运行中"
-                        case .geminiLive: return "AI Live 运行中"
-                        case .mahjong: return "Mahjong AI 运行中"
+                        if appModel.language == .english {
+                            switch appModel.activeFeature {
+                            case .spatialYOLO: return "Spatial YOLO Running"
+                            case .geminiLive: return "AI Live Running"
+                            case .mahjong: return "Mahjong AI Running"
+                            }
+                        } else {
+                            switch appModel.activeFeature {
+                            case .spatialYOLO: return "Spatial YOLO 运行中"
+                            case .geminiLive: return "AI Live 运行中"
+                            case .mahjong: return "Mahjong AI 运行中"
+                            }
                         }
                     }())
                         .font(.caption)

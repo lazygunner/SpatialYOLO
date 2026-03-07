@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct ProjectListView: View {
+    @EnvironmentObject var appModel: AppModel
     @State private var sessions: [SessionInfo] = []
     @State private var totalSize: Int64 = 0
     @State private var sessionToDelete: SessionInfo?
@@ -22,14 +23,16 @@ struct ProjectListView: View {
             HStack {
                 Image(systemName: "clock.arrow.circlepath")
                     .foregroundColor(.secondary)
-                Text("我的回忆")
+                Text(appModel.language == .english ? "My Memories" : "我的回忆")
                     .font(.headline)
                     .foregroundColor(.primary)
 
                 Spacer()
 
                 // 总占用空间
-                Text("共 \(sessions.count) 个 · \(SessionRecorder.formattedSize(totalSize))")
+                Text(appModel.language == .english 
+                     ? "Total \(sessions.count) · \(SessionRecorder.formattedSize(totalSize))"
+                     : "共 \(sessions.count) 个 · \(SessionRecorder.formattedSize(totalSize))")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -42,7 +45,7 @@ struct ProjectListView: View {
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(.system(size: 28))
                             .foregroundColor(.secondary.opacity(0.5))
-                        Text("暂无回忆")
+                        Text(appModel.language == .english ? "No Memories" : "暂无回忆")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
@@ -67,15 +70,15 @@ struct ProjectListView: View {
                 }
             }
         }
-        .alert("删除会话", isPresented: $showingDeleteAlert) {
-            Button("取消", role: .cancel) { }
-            Button("删除", role: .destructive) {
+        .alert(appModel.language == .english ? "Delete Session" : "删除会话", isPresented: $showingDeleteAlert) {
+            Button(appModel.language == .english ? "Cancel" : "取消", role: .cancel) { }
+            Button(appModel.language == .english ? "Delete" : "删除", role: .destructive) {
                 if let session = sessionToDelete {
                     deleteSession(session)
                 }
             }
         } message: {
-            Text("确定要删除这个历史会话吗？此操作不可恢复。")
+            Text(appModel.language == .english ? "Are you sure you want to delete this historical session? This action cannot be undone." : "确定要删除这个历史会话吗？此操作不可恢复。")
         }
         .onAppear {
             refreshData()
@@ -103,12 +106,14 @@ struct ProjectListView: View {
 // MARK: - 会话卡片
 
 struct SessionCard: View {
+    @EnvironmentObject var appModel: AppModel
     let session: SessionInfo
     var onDelete: (() -> Void)?
 
     private var formattedTime: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MM/dd HH:mm"
+        formatter.locale = appModel.language == .english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
+        formatter.dateFormat = appModel.language == .english ? "MMM d, h:mm a" : "MM/dd HH:mm"
         return formatter.string(from: session.startTime)
     }
 
@@ -166,11 +171,14 @@ struct SessionCard: View {
                     .font(.caption2.bold())
                     .foregroundColor(.primary)
                 
-                if !session.locationName.isEmpty && session.locationName != "未知地点" {
+                if !session.locationName.isEmpty && session.locationName != "未知地点" && session.locationName != "Unknown Location" {
                     HStack(spacing: 4) {
                         Image(systemName: "mappin.and.ellipse")
                             .font(.system(size: 10))
-                        Text(session.locationName)
+                        let locName = (session.locationName == "未知地点" || session.locationName == "正在获取位置...") 
+                            ? (appModel.language == .english ? "Unknown Location" : "未知地点") 
+                            : session.locationName
+                        Text(locName)
                             .lineLimit(1)
                     }
                     .font(.system(size: 10))
@@ -181,20 +189,20 @@ struct SessionCard: View {
                     // 状态徽标
                     switch session.status {
                     case .pending:
-                        Text("待处理")
+                        Text(appModel.language == .english ? "Pending" : "待处理")
                             .font(.system(size: 9))
                             .foregroundColor(.orange)
                     case .processing:
-                        Text("处理中")
+                        Text(appModel.language == .english ? "Processing" : "处理中")
                             .font(.system(size: 9))
                             .foregroundColor(.blue)
                     case .completed:
-                        Text("已处理")
+                        Text(appModel.language == .english ? "Completed" : "已处理")
                             .font(.system(size: 9))
                             .foregroundColor(.green)
                     }
                     Text("·")
-                    Text("\(session.frameCount) 帧")
+                    Text(appModel.language == .english ? "\(session.frameCount) Frames" : "\(session.frameCount) 帧")
                     Text("·")
                     Text(SessionRecorder.formattedSize(session.sizeBytes))
                 }

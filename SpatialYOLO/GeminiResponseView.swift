@@ -85,7 +85,7 @@ struct GeminiResponseView: View {
                                 spinAngle = 360
                             }
                         }
-                    Text("ESTABLISHING CONNECTION...")
+                    Text(appModel.language == .english ? "ESTABLISHING CONNECTION..." : "正在建立连接...")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(Color.hudAmber)
                 }
@@ -98,17 +98,17 @@ struct GeminiResponseView: View {
                             .opacity(dotPulse ? 0.3 : 1.0)
                             .animation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true),
                                        value: dotPulse)
-                        Text("AI RESPONDING...")
+                        Text(appModel.language == .english ? "AI RESPONDING..." : "AI 正在回复...")
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                             .foregroundColor(Color.hudCyan)
                     }
                 } else {
-                    Text("VOICE ACTIVE // SPEAK NOW")
+                    Text(appModel.language == .english ? "VOICE ACTIVE // SPEAK NOW" : "语音服务已开启 // 请开始说话")
                         .font(.system(size: 11, weight: .regular, design: .monospaced))
                         .foregroundColor(Color.hudCyan.opacity(0.6))
                 }
             } else {
-                Text("INIT \(appModel.activeProvider.rawValue.uppercased()) MODULE TO BEGIN")
+                Text(appModel.language == .english ? "INIT \(appModel.activeProvider.rawValue.uppercased()) MODULE TO BEGIN" : "启动 \(appModel.activeProvider.rawValue.uppercased()) 模块开始体验")
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
                     .foregroundColor(Color.hudCyan.opacity(0.5))
             }
@@ -130,10 +130,12 @@ struct GeminiResponseView: View {
                                 .stroke(Color.hudAmber, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                                 .frame(width: 12, height: 12)
                                 .rotationEffect(.degrees(spinAngle))
-                            Text("CONNECTING  //  TAP TO CANCEL")
+                            Text(appModel.language == .english ? "CONNECTING // TAP TO CANCEL" : "正在连接 // 点击取消")
                                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                         } else {
-                            Text(appModel.isGeminiActive ? "■ STOP" : "▶ START")
+                            Text(appModel.isGeminiActive 
+                                 ? (appModel.language == .english ? "■ STOP" : "■ 停止") 
+                                 : (appModel.language == .english ? "▶ START" : "▶ 启动"))
                                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                         }
                     }
@@ -155,7 +157,7 @@ struct GeminiResponseView: View {
                         }
                     } label: {
                         HStack {
-                            Text("↺ RETRY")
+                            Text(appModel.language == .english ? "↺ RETRY" : "↺ 重试")
                                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                         }
                         .frame(maxWidth: .infinity)
@@ -175,7 +177,7 @@ struct GeminiResponseView: View {
 
                 // 自动解说开关 (Switch)
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Auto 模式", isOn: $appModel.autoNarrate)
+                    Toggle(appModel.language == .english ? "Auto mode" : "Auto 模式", isOn: $appModel.autoNarrate)
                         .toggleStyle(.switch)
                         .tint(.hudAmber)
                         .disabled(!appModel.isGeminiActive || service.connectionState != .connected)
@@ -184,7 +186,9 @@ struct GeminiResponseView: View {
                         .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 8))
                         .hoverEffect()
                     
-                    Text("Auto 模式自动检测环境变化 / Manual 模式需要人工询问")
+                    Text(appModel.language == .english 
+                         ? "Auto: Environment change detection / Manual: Manual question" 
+                         : "Auto 模式自动检测环境变化 / Manual 模式需要人工询问")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.hudAmber.opacity(0.6))
                         .padding(.leading, 2)
@@ -250,9 +254,14 @@ struct GeminiResponseView: View {
 
     private var statusText: String {
         switch service.connectionState {
-        case .connected:    return "\(appModel.activeProvider.rawValue.uppercased()) // CONNECTED"
-        case .connecting:   return "CONNECTING..."
-        case .disconnected: return "OFFLINE"
+        case .connected:
+            return appModel.language == .english 
+                ? "\(appModel.activeProvider.rawValue.uppercased()) // CONNECTED"
+                : "\(appModel.activeProvider.rawValue.uppercased()) // 已连接"
+        case .connecting:
+            return appModel.language == .english ? "CONNECTING..." : "正在建立连接..."
+        case .disconnected:
+            return appModel.language == .english ? "OFFLINE" : "断开连接"
         case .error(let msg):
             let short = String(msg.prefix(30))
             return "ERR: \(short)"
