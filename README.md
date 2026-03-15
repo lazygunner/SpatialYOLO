@@ -69,6 +69,8 @@ Add `Config.plist` to the Xcode project's target build resources so it can be re
 
 > **Note:** `Config.plist` is in `.gitignore` and will not be committed to the repository.
 
+![](doc/Config.png)
+
 ### 4. Supported AI Providers
 
 **Gemini Live** (Google)
@@ -87,6 +89,32 @@ Add `Config.plist` to the Xcode project's target build resources so it can be re
 - **Audio Response:** AI responds with PCM audio, played through AVAudioEngine
 - **Subtitles:** AI response text displayed as typewriter-effect overlay on the video feed
 - **Provider Switch:** Toggle between Gemini and Qwen in the control panel
+
+### 5. Cloud Memory Sync (Cloud Run + Cloud Storage + PostgreSQL)
+
+The app now supports syncing processed local memories to a GCP backend:
+
+- **Stable user ID:** generated once on-device and stored in Keychain
+- **Image storage:** processed session frames + cartoon cover uploaded to Google Cloud Storage
+- **Database table:** session metadata and frame context upserted into the `memory_sessions` table
+- **Backend:** deployable Cloud Run service in [`cloud-memory-service`](/Volumes/Data/workspace/VP/SpatialYOLO1/cloud-memory-service)
+
+Configure the app-side sync endpoint in `SpatialYOLO/Config.plist`:
+
+```xml
+<key>MEMORY_SYNC_BASE_URL</key>
+<string>https://your-cloud-run-service.run.app</string>
+<key>MEMORY_SYNC_TOKEN</key>
+<string>your-shared-token</string>
+```
+
+Backend environment variables:
+
+- `POSTGRES_DSN`
+- `GCS_BUCKET`
+- `MEMORY_SYNC_TOKEN`
+
+The Cloud Run service auto-creates the `memory_sessions` table on startup. The SQL definition is in [`cloud-memory-service/schema.sql`](/Volumes/Data/workspace/VP/SpatialYOLO1/cloud-memory-service/schema.sql).
 
 ## IV. Build & Run
 

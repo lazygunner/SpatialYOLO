@@ -205,6 +205,12 @@ struct SessionCard: View {
                     Text(appModel.language == .english ? "\(session.frameCount) Frames" : "\(session.frameCount) 帧")
                     Text("·")
                     Text(SessionRecorder.formattedSize(session.sizeBytes))
+
+                    if session.cloudSyncState != .notConfigured {
+                        Text("·")
+                        Image(systemName: cloudStatusIcon)
+                            .foregroundColor(cloudStatusColor)
+                    }
                 }
                 .font(.system(size: 9))
                 .foregroundColor(.secondary)
@@ -222,5 +228,33 @@ struct SessionCard: View {
                         .stroke(Color.white.opacity(0.1), lineWidth: 1)
                 )
         )
+    }
+
+    private var cloudStatusIcon: String {
+        switch session.cloudSyncState {
+        case .pending:
+            return "icloud"
+        case .syncing:
+            return "arrow.triangle.2.circlepath.icloud"
+        case .synced:
+            return "checkmark.icloud.fill"
+        case .failed:
+            return "exclamationmark.icloud.fill"
+        case .notConfigured:
+            return "icloud"
+        }
+    }
+
+    private var cloudStatusColor: Color {
+        switch session.cloudSyncState {
+        case .pending, .syncing:
+            return .orange
+        case .synced:
+            return .green
+        case .failed:
+            return .red
+        case .notConfigured:
+            return .secondary
+        }
     }
 }

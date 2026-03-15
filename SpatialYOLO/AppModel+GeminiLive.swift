@@ -46,10 +46,7 @@ extension AppModel {
 
         activeService.connect()
 
-        // 自动启动本地 STT（geminiLive / spatialYOLO 模式）
-        if activeFeature != .mahjong && !audioInputMonitor.isActive {
-            audioInputMonitor.toggle()
-        }
+        bindOpenClawTranscriptMonitoring()
 
         // 开始录制会话帧
         sessionRecorder.startSession()
@@ -60,15 +57,13 @@ extension AppModel {
         isGeminiActive = false
         activeService.disconnect()
 
-        // 停止本地 STT
-        if audioInputMonitor.isActive {
-            audioInputMonitor.toggle()
-        }
-
         // 停止录制并重置场景状态
         sessionRecorder.stopSession()
         lastSentThumbnail = nil
         isVoiceSamplingActive = false
+        unbindOpenClawTranscriptMonitoring()
+        lastTriggeredTranscript = ""
+        lastObservedOpenClawTranscript = ""
     }
 
     /// 切换 AI Live 会话状态
@@ -207,6 +202,10 @@ extension AppModel {
 
             guard let resizedCGImage = ctx.makeImage(),
                   let jpegData = UIImage(cgImage: resizedCGImage).jpegData(compressionQuality: 0.8) else { return }
+
+            await MainActor.run {
+                self?.lastProcessedFrame = jpegData
+            }
 
             service.sendVideoFrame(jpegData: jpegData)
 

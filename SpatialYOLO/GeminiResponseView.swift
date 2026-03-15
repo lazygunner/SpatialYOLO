@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 /// AI Live 控制面板（HUD 风格）
 /// 连接状态、会话倒计时、服务商切换、用户文字输入、启停控制
@@ -193,12 +194,35 @@ struct GeminiResponseView: View {
                         .foregroundColor(.hudAmber.opacity(0.6))
                         .padding(.leading, 2)
                 }
+
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+
+            if !appModel.openClawStatusMessage.isEmpty {
+                Text(appModel.openClawStatusMessage)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.hudAmber.opacity(0.8))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+            }
+
+            if !appModel.openClawTasks.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(appModel.openClawTasks) { task in
+                            openClawTaskCard(task)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                }
+                .frame(height: 90)
+            }
+
+            Spacer(minLength: 0)
         }
+        .padding(.bottom, 12)
         .padding(.vertical, 8)
-        .frame(width: 960, height: 180)
+        .frame(width: 960, height: 300)
         .background(Color.black.opacity(0.85))
         .overlay(
             RoundedRectangle(cornerRadius: 0)
@@ -273,5 +297,107 @@ struct GeminiResponseView: View {
         let minutes = total / 60
         let seconds = total % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    @ViewBuilder
+    private func openClawTaskCard(_ task: AppModel.OpenClawTaskItem) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if let data = task.previewJPEGData, let image = UIImage(data: data) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Rectangle()
+                            .fill(Color.hudAmber.opacity(0.15))
+                    }
+                }
+                .frame(width: 96, height: 54)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                Text(taskStatusText(task.status))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(taskStatusColor(task.status).opacity(0.2))
+                    .foregroundColor(taskStatusColor(task.status))
+                    .clipShape(Capsule())
+                    .padding(4)
+            }
+
+            Text(task.prompt)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(2)
+                .frame(width: 180, alignment: .leading)
+
+            if !task.stepLabel.isEmpty && task.status == .processing {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(taskProgressText(task))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.hudCyan.opacity(0.9))
+                        .lineLimit(1)
+                        .frame(width: 180, alignment: .leading)
+
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.white.opacity(0.08))
+                            Capsule()
+                                .fill(Color.hudAmber.opacity(0.85))
+                                .frame(width: geometry.size.width * max(0, min(task.progress, 1)))
+                        }
+                    }
+                    .frame(width: 180, height: 6)
+                }
+            }
+
+            if !task.responseText.isEmpty {
+                Text(task.responseText)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.hudAmber.opacity(0.85))
+                    .lineLimit(2)
+                    .frame(width: 180, alignment: .leading)
+            } else if !task.errorText.isEmpty {
+                Text(task.errorText)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.red.opacity(0.85))
+                    .lineLimit(2)
+                    .frame(width: 180, alignment: .leading)
+            }
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.04))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.hudAmber.opacity(0.25), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func taskStatusText(_ status: OpenClawService.TaskStatus) -> String {
+        switch status {
+        case .queued: return appModel.language == .english ? "QUEUED" : "排队中"
+        case .processing: return appModel.language == .english ? "RUNNING" : "处理中"
+        case .completed: return appModel.language == .english ? "DONE" : "已完成"
+        case .failed: return appModel.language == .english ? "FAILED" : "失败"
+        }
+    }
+
+    private func taskStatusColor(_ status: OpenClawService.TaskStatus) -> Color {
+        switch status {
+        case .queued: return .yellow
+        case .processing: return .hudAmber
+        case .completed: return .green
+        case .failed: return .red
+        }
+    }
+
+    private func taskProgressText(_ task: AppModel.OpenClawTaskItem) -> String {
+        if task.totalSteps > 0 && task.stepIndex > 0 {
+            return "\(task.stepIndex)/\(task.totalSteps) \(task.stepLabel)"
+        }
+        return task.stepLabel
     }
 }

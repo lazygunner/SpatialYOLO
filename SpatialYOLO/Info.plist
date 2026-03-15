@@ -12,6 +12,17 @@
 	<string>world sensing</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>我们需要获取您的位置以在回忆中记录发生地点。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>需要访问局域网中的 OpenClaw 网关与上传服务以处理图片和触发淘宝加购流程。</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_spylolo-perm._tcp</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsTabbedSceneCollection</key>

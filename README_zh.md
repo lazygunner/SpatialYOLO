@@ -69,6 +69,8 @@ cp SpatialYOLO/Config.plist.example SpatialYOLO/Config.plist
 
 > **注意：** `Config.plist` 已加入 `.gitignore`，不会被提交到代码仓库。
 
+![](doc/Config.png)
+
 ### 4. 支持的 AI 服务商
 
 **Gemini Live**（Google）
@@ -87,6 +89,37 @@ cp SpatialYOLO/Config.plist.example SpatialYOLO/Config.plist
 - **语音回复：** AI 以 PCM 音频回复，通过 AVAudioEngine 播放
 - **字幕：** AI 回复文字以打字机效果叠加显示在视频画面上
 - **服务商切换：** 在控制面板中切换 Gemini 和 Qwen
+
+### 5. 开发设计文档
+
+- [Auto 模式灵敏度与 OpenClaw 集成方案](doc/auto-narrate-openclaw-plan.md)
+- [OpenClaw 图片到淘宝加购链路整理](doc/openclaw-taobao-image-workflow.md)
+
+### 6. 云端记忆同步（Cloud Run + Cloud Storage + PostgreSQL）
+
+应用现已支持将本地处理完成的回忆同步到 GCP：
+
+- **稳定用户 ID：** 设备首次运行时生成 UUID，并持久化到 Keychain
+- **图片存储：** 会话帧与卡通封面上传到 Google Cloud Storage
+- **数据库表：** 会话元数据与帧上下文写入 `memory_sessions` 表
+- **后端服务：** 可直接部署的 Cloud Run 服务位于 [`cloud-memory-service`](/Volumes/Data/workspace/VP/SpatialYOLO1/cloud-memory-service)
+
+在 `SpatialYOLO/Config.plist` 中补充客户端同步配置：
+
+```xml
+<key>MEMORY_SYNC_BASE_URL</key>
+<string>https://your-cloud-run-service.run.app</string>
+<key>MEMORY_SYNC_TOKEN</key>
+<string>your-shared-token</string>
+```
+
+后端环境变量：
+
+- `POSTGRES_DSN`
+- `GCS_BUCKET`
+- `MEMORY_SYNC_TOKEN`
+
+Cloud Run 服务启动时会自动创建 `memory_sessions` 表。表结构定义见 [`cloud-memory-service/schema.sql`](/Volumes/Data/workspace/VP/SpatialYOLO1/cloud-memory-service/schema.sql)。
 
 ## 四、构建与运行
 

@@ -19,6 +19,8 @@ import VisionEntitlementServices
 @Observable
 public class AppModel: ObservableObject {
     let immersiveSpaceID = "ImmersiveSpace"
+    private let localNetworkPermissionRequester = LocalNetworkPermissionRequester()
+    private var hasStartedLocalNetworkPermissionProbe = false
     enum ImmersiveSpaceState {
         case closed
         case inTransition
@@ -40,6 +42,23 @@ public class AppModel: ObservableObject {
         case english = "English"
         var id: String { self.rawValue }
     }
+
+    struct OpenClawTaskItem: Identifiable, Equatable {
+        let id: String
+        var status: OpenClawService.TaskStatus
+        var executor: String
+        var prompt: String
+        var stepKey: String
+        var stepLabel: String
+        var stepIndex: Int
+        var totalSteps: Int
+        var progress: Double
+        var createdAt: Date
+        var updatedAt: Date
+        var responseText: String
+        var errorText: String
+        var previewJPEGData: Data?
+    }
     var language: AppLanguage = .chinese {
         didSet {
             audioInputMonitor.language = language
@@ -54,6 +73,12 @@ public class AppModel: ObservableObject {
     }
 
     var selectedTab = 0
+
+    func requestLocalNetworkPermissionIfNeeded() {
+        guard !hasStartedLocalNetworkPermissionProbe else { return }
+        hasStartedLocalNetworkPermissionProbe = true
+        localNetworkPermissionRequester.requestIfNeeded()
+    }
     
     var arKitSession = ARKitSession()
     var worldTracking = WorldTrackingProvider()
@@ -185,6 +210,10 @@ public class AppModel: ObservableObject {
             This data is for spatial reference only (location and distance).
             Do NOT simply repeat the [Frame Analysis] data. Describe the scene in a natural, human-like way.
 
+            【Shopping Cart Requests】
+            If the user asks to add something to cart or shopping cart, reply only: "Processing now."
+            Do not ask follow-up clarification questions in that turn.
+
             【Response Style】
             Answer concisely in English. Be natural and friendly. Mention spatial relationships between objects when describing the environment.
             """
@@ -198,6 +227,10 @@ public class AppModel: ObservableObject {
             每帧图像前会附带 [帧分析] 结构化数据，包含 YOLO 物体检测和人脸表情分析结果。
             这些数据仅作为辅助参考，帮助你了解物体的大致方位（左侧/正前方/右侧）和距离（米）。
             不要直接复述 [帧分析] 的内容，而是用自然语言描述你看到的场景。
+
+            【购物车请求】
+            当用户表达“加入购物车 / 购物车 / 加购”等需求时，你在该轮直接回复：“正在处理中”。
+            不要继续追问用户想加入哪个商品。
 
             【回复风格】
             用中文简洁回答，语言自然友好。描述环境时可以提及物体的空间位置关系。
@@ -258,6 +291,27 @@ public class AppModel: ObservableObject {
     let sceneChangeThreshold: Float = 0.04                     // MSE 阈值 - 优化：从0.08降至0.04，更灵敏
     var isVoiceSamplingActive: Bool = false                    // 非 Auto 模式下，是否因为检测到语音而激活采集
 
+    // MARK: - OpenClaw
+    let openClawService = OpenClawService(configuration: .init(
+        gatewayBaseURL: URL(string: AppModel.loadOpenClawGatewayBaseURL()),
+        uploadBaseURL: URL(string: AppModel.loadOpenClawUploadBaseURL()),
+        gatewayToken: AppModel.loadOpenClawToken(),
+        uploadToken: AppModel.loadOpenClawUploadToken(),
+        model: AppModel.loadOpenClawModel(),
+        workspaceImagePath: AppModel.loadOpenClawWorkspaceImagePath()
+    ))
+    var lastProcessedFrame: Data?
+    var lastTriggeredTranscript: String = ""
+    var lastObservedOpenClawTranscript: String = ""
+    var lastOpenClawTriggerTime: Date = .distantPast
+    let openClawTriggerCooldown: TimeInterval = 8
+    var isOpenClawBusy: Bool = false
+    var openClawStatusMessage: String = ""
+    var openClawLastResponse: String = ""
+    var openClawLastTriggerSource: String = ""
+    var openClawTasks: [OpenClawTaskItem] = []
+    var openClawPollingTasks: [String: Task<Void, Never>] = [:]
+
     // MARK: - 会话录制
     var sessionRecorder = SessionRecorder()
 
@@ -295,7 +349,7 @@ public class AppModel: ObservableObject {
     }
 
     /// 从 Config.plist 读取 Gemini API Key
-    static func loadGeminiAPIKey() -> String {
+    nonisolated static func loadGeminiAPIKey() -> String {
         guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
               let data = try? Data(contentsOf: url),
               let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
@@ -308,7 +362,7 @@ public class AppModel: ObservableObject {
     }
 
     /// 从 Config.plist 读取 Qwen API Key
-    static func loadQwenAPIKey() -> String {
+    nonisolated static func loadQwenAPIKey() -> String {
         guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
               let data = try? Data(contentsOf: url),
               let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
@@ -318,6 +372,75 @@ public class AppModel: ObservableObject {
             return ""
         }
         return apiKey
+    }
+
+    nonisolated static func loadOpenClawGatewayBaseURL() -> String {
+        guard let value = loadConfigString(forKey: "OPENCLAW_GATEWAY_BASE_URL"),
+              !value.isEmpty else {
+            return ""
+        }
+        return value
+    }
+
+    nonisolated static func loadOpenClawUploadBaseURL() -> String {
+        guard let value = loadConfigString(forKey: "OPENCLAW_UPLOAD_BASE_URL"),
+              !value.isEmpty else {
+            return ""
+        }
+        return value
+    }
+
+    nonisolated static func loadOpenClawToken() -> String {
+        guard let value = loadConfigString(forKey: "OPENCLAW_TOKEN"),
+              value != "YOUR_TOKEN_HERE",
+              !value.isEmpty else {
+            return ""
+        }
+        return value
+    }
+
+    nonisolated static func loadOpenClawUploadToken() -> String {
+        guard let value = loadConfigString(forKey: "OPENCLAW_UPLOAD_TOKEN"),
+              value != "YOUR_TOKEN_HERE",
+              !value.isEmpty else {
+            return loadOpenClawToken()
+        }
+        return value
+    }
+
+    nonisolated static func loadOpenClawModel() -> String {
+        loadConfigString(forKey: "OPENCLAW_MODEL") ?? "openclaw:main"
+    }
+
+    nonisolated static func loadOpenClawWorkspaceImagePath() -> String {
+        loadConfigString(forKey: "OPENCLAW_WORKSPACE_IMAGE_PATH") ?? "/Users/gunner/.openclaw/workspace/image.png"
+    }
+
+    nonisolated static func loadMemorySyncBaseURL() -> String {
+        guard let value = loadConfigString(forKey: "MEMORY_SYNC_BASE_URL"),
+              !value.isEmpty else {
+            return ""
+        }
+        return value
+    }
+
+    nonisolated static func loadMemorySyncToken() -> String {
+        guard let value = loadConfigString(forKey: "MEMORY_SYNC_TOKEN"),
+              value != "YOUR_TOKEN_HERE",
+              !value.isEmpty else {
+            return ""
+        }
+        return value
+    }
+
+    private nonisolated static func loadConfigString(forKey key: String) -> String? {
+        guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
+              let data = try? Data(contentsOf: url),
+              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let value = dict[key] as? String else {
+            return nil
+        }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // 初始化深度模型（双目 + 单目）
@@ -888,7 +1011,7 @@ public class AppModel: ObservableObject {
             let rightSample = samples.filter {
                 return $0.parameters.cameraPosition == .right
             }
-            
+
             // 处理左摄像头
             if !leftSample.isEmpty {
                 self.pixelBufferLeft = leftSample[0].pixelBuffer

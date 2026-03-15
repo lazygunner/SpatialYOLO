@@ -49,7 +49,8 @@ class SessionRecorder {
                 "startTime": ISO8601DateFormatter().string(from: sessionStartTime!),
                 "device": "Apple Vision Pro",
                 "status": SessionStatus.pending.rawValue,
-                "locationName": "正在获取位置..."
+                "locationName": "正在获取位置...",
+                "userId": LocalUserIdentity.currentUserID()
             ]
             let metaData = try JSONSerialization.data(withJSONObject: meta, options: .prettyPrinted)
             try metaData.write(to: dir.appendingPathComponent("session.json"))
@@ -102,7 +103,11 @@ class SessionRecorder {
             sizeBytes: Self.directorySize(at: dir),
             status: .pending,
             cartoonImageURL: nil,
-            locationName: locationManager.currentLocationName
+            locationName: locationManager.currentLocationName,
+            cloudSyncState: .pending,
+            cloudSyncedAt: nil,
+            cloudError: nil,
+            cloudRecordPath: nil
         )
         
         Task {
@@ -163,6 +168,14 @@ class SessionRecorder {
             let frameCount = meta["frameCount"] as? Int ?? 0
             let statusRaw = meta["status"] as? String ?? SessionStatus.pending.rawValue
             let status = SessionStatus(rawValue: statusRaw) ?? .pending
+            let cloudStateRaw = meta["cloudSyncState"] as? String
+            let cloudState = resolveCloudSyncState(
+                rawValue: cloudStateRaw,
+                sessionStatus: status
+            )
+            let cloudSyncedAt = parseISO8601Date(meta["cloudSyncedAt"] as? String)
+            let cloudError = normalizedCloudString(meta["cloudError"] as? String)
+            let cloudRecordPath = normalizedCloudString(meta["cloudRecordPath"] as? String)
             
             // 优先查找是否存在卡通图封面
             let cartoonFile = dir.appendingPathComponent("cartoon.jpg")
@@ -187,7 +200,11 @@ class SessionRecorder {
                 sizeBytes: dirSize,
                 status: status,
                 cartoonImageURL: cartoonURL,
-                locationName: locationName
+                locationName: locationName,
+                cloudSyncState: cloudState,
+                cloudSyncedAt: cloudSyncedAt,
+                cloudError: cloudError,
+                cloudRecordPath: cloudRecordPath
             ))
         }
 
@@ -205,7 +222,10 @@ class SessionRecorder {
         ) else { return [] }
 
         let jpegFiles = contents
-            .filter { $0.pathExtension == "jpg" }
+            .filter {
+                $0.pathExtension == "jpg" &&
+                $0.deletingPathExtension().lastPathComponent.hasPrefix("frame_")
+            }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
         let rawFrames = jpegFiles.map { jpegURL -> FrameInfo in
@@ -351,6 +371,8 @@ class SessionRecorder {
             saveJSON(meta, to: metaFile)
             print("[处理] 会话 \(session.id) 无帧，直接标记完成。")
         }
+
+        await CloudMemorySyncService.shared.syncSession(directory: dir)
     }
 
     // MARK: - 卡通图生成 (Nano Banana API / Gemini 3.1 Flash Image Preview)
@@ -559,6 +581,32 @@ class SessionRecorder {
             try? data.write(to: url)
         }
     }
+
+    private static func resolveCloudSyncState(rawValue: String?, sessionStatus: SessionStatus) -> CloudSyncState {
+        if let rawValue,
+           let state = CloudSyncState(rawValue: rawValue) {
+            return state == .syncing ? .pending : state
+        }
+
+        guard !AppModel.loadMemorySyncBaseURL().isEmpty,
+              sessionStatus == .completed else {
+            return .notConfigured
+        }
+        return .pending
+    }
+
+    private static func parseISO8601Date(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+        return ISO8601DateFormatter().date(from: value)
+    }
+
+    private static func normalizedCloudString(_ value: String?) -> String? {
+        guard let value,
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return value
+    }
 }
 
 // MARK: - 数据模型
@@ -579,6 +627,10 @@ struct SessionInfo: Identifiable {
     let status: SessionStatus
     let cartoonImageURL: URL?
     let locationName: String
+    let cloudSyncState: CloudSyncState
+    let cloudSyncedAt: Date?
+    let cloudError: String?
+    let cloudRecordPath: String?
 }
 
 struct FrameInfo: Identifiable {

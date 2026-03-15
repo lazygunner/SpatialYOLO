@@ -40,7 +40,9 @@ class AudioInputMonitor {
 
     var sttStatus: STTStatus = .idle
     var localTranscript: String = ""
-    var committedTranscript: String = ""
+    var committedLines: [String] = []
+    var onTranscriptPreviewChanged: ((String) -> Void)?
+    var onTranscriptChanged: ((String) -> Void)?
 
     // MARK: - Private — 音频引擎
 
@@ -54,8 +56,13 @@ class AudioInputMonitor {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var isRestarting = false
-    private var committedHistory: [String] = []
-    private let maxHistoryLines = 2
+    private var scheduledStartTask: Task<Void, Never>?
+    private let maxHistoryLines = 8
+    private var autoStartAttempt = 0
+    private let maxAutoStartAttempts = 2
+    
+    private var speechPauseTimer: Timer?
+    private var isCurrentTaskCommitted = false
 
     // MARK: - 开关
 
@@ -67,9 +74,50 @@ class AudioInputMonitor {
         }
     }
 
+    func startIfNeeded() {
+        guard !isActive else { return }
+        startEngine()
+    }
+
+    func stopIfNeeded() {
+        guard isActive else { return }
+        stopEngine()
+    }
+
+    func scheduleAutoStart(after delay: TimeInterval = 1.2) {
+        guard !isActive else { return }
+
+        scheduledStartTask?.cancel()
+        DispatchQueue.main.async {
+            if case .active = self.sttStatus {
+                return
+            }
+            self.sttStatus = .requesting
+        }
+
+        scheduledStartTask = Task { [weak self] in
+            let duration = UInt64(delay * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: duration)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, !self.isActive else { return }
+                self.autoStartAttempt += 1
+                self.startEngine()
+            }
+        }
+    }
+
+    func cancelScheduledAutoStart() {
+        scheduledStartTask?.cancel()
+        scheduledStartTask = nil
+        autoStartAttempt = 0
+    }
+
     // MARK: - 引擎生命周期
 
     private func startEngine() {
+        scheduledStartTask?.cancel()
+        scheduledStartTask = nil
         DispatchQueue.main.async {
             self.sttStatus = .requesting
             self.isActive = true
@@ -100,6 +148,7 @@ class AudioInputMonitor {
             print("[STT] AudioSession 配置失败: \(error)")
             sttStatus = .error(error.localizedDescription)
             isActive = false
+            retryAutoStartIfNeeded(after: 1.2)
             return
         }
 
@@ -122,20 +171,21 @@ class AudioInputMonitor {
             audioEngine = nil
             sttStatus = .error(error.localizedDescription)
             isActive = false
+            retryAutoStartIfNeeded(after: 1.2)
             return
         }
 
         waveformBars = Array(repeating: 0, count: Self.barCount)
         inputLevel = 0
         localTranscript = ""
-        committedTranscript = ""
-        committedHistory = []
+        committedLines = []
         rmsAccumulator.removeAll()
 
         startRecognition()
     }
 
     private func stopEngine() {
+        cancelScheduledAutoStart()
         stopRecognition()
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
@@ -146,6 +196,8 @@ class AudioInputMonitor {
             self.waveformBars = Array(repeating: 0, count: Self.barCount)
             self.inputLevel = 0
             self.localTranscript = ""
+            self.committedLines = []
+            self.isRestarting = false
         }
     }
 
@@ -207,6 +259,8 @@ class AudioInputMonitor {
         } else {
             sttStatus = .unavailable
             print("[STT] 无可用语音识别器")
+            isActive = false
+            retryAutoStartIfNeeded(after: 1.2)
             return
         }
 
@@ -220,20 +274,32 @@ class AudioInputMonitor {
             guard let self else { return }
 
             if let result {
-                let text = result.bestTranscription.formattedString
-                DispatchQueue.main.async { self.localTranscript = text }
+                let currentLine = self.normalizeTranscriptLine(result.bestTranscription.formattedString)
 
-                if result.isFinal {
-                    if !text.trimmingCharacters(in: .whitespaces).isEmpty {
-                        self.committedHistory.append(text)
-                        if self.committedHistory.count > self.maxHistoryLines {
-                            self.committedHistory.removeFirst()
+                DispatchQueue.main.async {
+                    self.speechPauseTimer?.invalidate()
+                    
+                    if result.isFinal {
+                        if !currentLine.isEmpty && !self.isCurrentTaskCommitted {
+                            self.appendCommittedSentences([currentLine])
+                            self.onTranscriptChanged?(currentLine)
+                            self.isCurrentTaskCommitted = true
                         }
-                        DispatchQueue.main.async {
-                            self.committedTranscript = self.committedHistory.joined(separator: "\n")
-                            self.localTranscript = ""
+                        self.localTranscript = ""
+                        self.onTranscriptPreviewChanged?("")
+                    } else {
+                        if !currentLine.isEmpty {
+                            self.localTranscript = currentLine
+                            self.onTranscriptPreviewChanged?(currentLine)
+                        }
+                        
+                        self.speechPauseTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
+                            self?.forceCommitAndRestart()
                         }
                     }
+                }
+
+                if result.isFinal {
                     self.scheduleRestart()
                 }
             }
@@ -251,27 +317,69 @@ class AudioInputMonitor {
 
         DispatchQueue.main.async {
             self.sttStatus = .active
+            self.autoStartAttempt = 0
+            self.isCurrentTaskCommitted = false
             print("[STT] 识别已启动 (locale: \(recognizer!.locale.identifier))")
         }
     }
+    
+    private func forceCommitAndRestart() {
+        guard isActive, !isRestarting else { return }
+        
+        let lineToCommit = self.localTranscript
+        if !lineToCommit.isEmpty && !isCurrentTaskCommitted {
+            self.appendCommittedSentences([lineToCommit])
+            self.onTranscriptChanged?(lineToCommit)
+            self.isCurrentTaskCommitted = true
+        }
+        
+        self.localTranscript = ""
+        self.onTranscriptPreviewChanged?("")
+        
+        self.scheduleRestart()
+    }
 
     private func stopRecognition() {
+        speechPauseTimer?.invalidate()
+        speechPauseTimer = nil
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         recognitionRequest = nil
         recognitionTask = nil
         speechRecognizer = nil
-        isRestarting = false
+    }
+
+    private func retryAutoStartIfNeeded(after delay: TimeInterval) {
+        guard autoStartAttempt < maxAutoStartAttempts else { return }
+        scheduleAutoStart(after: delay)
     }
 
     private func scheduleRestart() {
-        guard !isRestarting else { return }
-        isRestarting = true
-        stopRecognition()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self, self.isActive else { return }
-            self.isRestarting = false
-            self.startRecognition()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.isRestarting else { return }
+            self.isRestarting = true
+            self.stopRecognition()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self, self.isActive else { return }
+                self.isRestarting = false
+                self.startRecognition()
+            }
         }
+    }
+
+    private func appendCommittedSentences(_ sentences: [String]) {
+        guard !sentences.isEmpty else { return }
+
+        committedLines.append(contentsOf: sentences)
+        if committedLines.count > maxHistoryLines {
+            committedLines.removeFirst(committedLines.count - maxHistoryLines)
+        }
+    }
+
+    private func normalizeTranscriptLine(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

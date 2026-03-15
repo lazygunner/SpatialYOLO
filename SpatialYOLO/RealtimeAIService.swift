@@ -62,3 +62,198 @@ protocol RealtimeAIService: Observable, AnyObject {
     /// 发送当前帧结构化检测上下文（在视频帧之前调用）
     func sendDetectionContext(_ text: String)
 }
+
+enum TranscriptSpeaker {
+    case user
+    case model
+
+    var prefix: String {
+        switch self {
+        case .user:
+            return "🗣 "
+        case .model:
+            return ""
+        }
+    }
+}
+
+struct TranscriptRoleUpdate {
+    let committedLines: [String]
+    let currentFragment: String
+}
+
+struct TranscriptRoleAccumulator {
+    private var rawText: String = ""
+    private var committedSentenceCount: Int = 0
+    private(set) var currentFragment: String = ""
+
+    mutating func reset() {
+        rawText = ""
+        committedSentenceCount = 0
+        currentFragment = ""
+    }
+
+    mutating func replaceCumulative(with text: String) -> TranscriptRoleUpdate {
+        rawText = text
+        return process()
+    }
+
+    mutating func appendDelta(_ text: String) -> TranscriptRoleUpdate {
+        rawText += text
+        return process()
+    }
+
+    mutating func finalizeCurrentFragment() -> String? {
+        let fragment = currentFragment
+        reset()
+        return fragment.isEmpty ? nil : fragment
+    }
+
+    private mutating func process() -> TranscriptRoleUpdate {
+        let parsed = TranscriptSentenceParser.parse(rawText)
+        let committed = Array(parsed.sentences.dropFirst(committedSentenceCount))
+        committedSentenceCount = parsed.sentences.count
+        currentFragment = parsed.currentFragment
+        return TranscriptRoleUpdate(
+            committedLines: committed,
+            currentFragment: currentFragment
+        )
+    }
+}
+
+struct TranscriptConversationFormatter {
+    private var committedLines: [String] = []
+    private var activeSpeaker: TranscriptSpeaker?
+    private var userAccumulator = TranscriptRoleAccumulator()
+    private var modelAccumulator = TranscriptRoleAccumulator()
+
+    mutating func reset() -> String {
+        committedLines = []
+        activeSpeaker = nil
+        userAccumulator.reset()
+        modelAccumulator.reset()
+        return ""
+    }
+
+    mutating func replaceCumulative(_ text: String, speaker: TranscriptSpeaker) -> String {
+        prepareForIncomingUpdate(from: speaker)
+        let update: TranscriptRoleUpdate
+        switch speaker {
+        case .user:
+            update = userAccumulator.replaceCumulative(with: text)
+        case .model:
+            update = modelAccumulator.replaceCumulative(with: text)
+        }
+        appendCommittedLines(update.committedLines, speaker: speaker)
+        return renderedText()
+    }
+
+    mutating func appendDelta(_ text: String, speaker: TranscriptSpeaker) -> String {
+        prepareForIncomingUpdate(from: speaker)
+        let update: TranscriptRoleUpdate
+        switch speaker {
+        case .user:
+            update = userAccumulator.appendDelta(text)
+        case .model:
+            update = modelAccumulator.appendDelta(text)
+        }
+        appendCommittedLines(update.committedLines, speaker: speaker)
+        return renderedText()
+    }
+
+    mutating func finalize(_ speaker: TranscriptSpeaker) -> String {
+        let fragment: String?
+        switch speaker {
+        case .user:
+            fragment = userAccumulator.finalizeCurrentFragment()
+        case .model:
+            fragment = modelAccumulator.finalizeCurrentFragment()
+        }
+
+        if let fragment, !fragment.isEmpty {
+            committedLines.append(formatted(fragment, speaker: speaker))
+        }
+        if activeSpeaker == speaker {
+            activeSpeaker = nil
+        }
+        return renderedText()
+    }
+
+    private mutating func prepareForIncomingUpdate(from speaker: TranscriptSpeaker) {
+        if let activeSpeaker, activeSpeaker != speaker {
+            _ = finalize(activeSpeaker)
+        }
+        self.activeSpeaker = speaker
+    }
+
+    private mutating func appendCommittedLines(_ lines: [String], speaker: TranscriptSpeaker) {
+        guard !lines.isEmpty else { return }
+        committedLines.append(contentsOf: lines.map { formatted($0, speaker: speaker) })
+    }
+
+    private func renderedText() -> String {
+        var lines = committedLines
+        if let activeLine = activeLineText() {
+            lines.append(activeLine)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func activeLineText() -> String? {
+        guard let activeSpeaker else { return nil }
+
+        let fragment: String
+        switch activeSpeaker {
+        case .user:
+            fragment = userAccumulator.currentFragment
+        case .model:
+            fragment = modelAccumulator.currentFragment
+        }
+
+        guard !fragment.isEmpty else { return nil }
+        return formatted(fragment, speaker: activeSpeaker)
+    }
+
+    private func formatted(_ text: String, speaker: TranscriptSpeaker) -> String {
+        speaker.prefix + text
+    }
+}
+
+enum TranscriptSentenceParser {
+    static func parse(_ text: String) -> (sentences: [String], currentFragment: String) {
+        let flattened = text.replacingOccurrences(of: "\n", with: " ")
+        var sentences: [String] = []
+        var current = ""
+
+        for character in flattened {
+            current.append(character)
+            if isSentenceTerminator(character) {
+                let normalized = normalize(current)
+                if !normalized.isEmpty {
+                    sentences.append(normalized)
+                }
+                current = ""
+            }
+        }
+
+        return (
+            sentences,
+            normalize(current)
+        )
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isSentenceTerminator(_ character: Character) -> Bool {
+        switch character {
+        case "。", "！", "？", ".", "!", "?", ";", "；":
+            return true
+        default:
+            return false
+        }
+    }
+}

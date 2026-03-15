@@ -42,6 +42,7 @@ class QwenOmniService: RealtimeAIService {
 
     // MARK: - Private
 
+    private var transcriptFormatter = TranscriptConversationFormatter()
     private let apiKey: String
     private let model = "qwen3-omni-flash-realtime-2025-12-01"
     private var webSocketTask: URLSessionWebSocketTask?
@@ -141,7 +142,7 @@ class QwenOmniService: RealtimeAIService {
 
         connectionState = .disconnected
         isModelSpeaking = false
-        responseText = ""
+        responseText = transcriptFormatter.reset()
         sessionStartTime = nil
         sessionRemainingSeconds = 7200
         framesSent = 0
@@ -386,7 +387,7 @@ class QwenOmniService: RealtimeAIService {
         case "response.audio_transcript.delta":
             // 音频转录（中文文字）
             if let delta = json["delta"] as? String {
-                responseText += delta
+                responseText = transcriptFormatter.appendDelta(delta, speaker: .model)
                 currentTurnTranscript += delta
                 isModelSpeaking = true
 
@@ -396,7 +397,7 @@ class QwenOmniService: RealtimeAIService {
         case "response.text.delta":
             // 纯文字响应
             if let delta = json["delta"] as? String {
-                responseText += delta
+                responseText = transcriptFormatter.appendDelta(delta, speaker: .model)
                 currentTurnTranscript += delta
                 isModelSpeaking = true
 
@@ -443,16 +444,13 @@ class QwenOmniService: RealtimeAIService {
 
         case "response.done":
             isModelSpeaking = false
+            responseText = transcriptFormatter.finalize(.model)
             print("[QwenOmni] 回合完成, responseText长度: \(responseText.count)")
 
             // 解析当前回合的转录文本，提取打牌事件
             if !currentTurnTranscript.isEmpty {
                 parseDiscardEvents(from: currentTurnTranscript)
                 currentTurnTranscript = ""
-            }
-
-            if !responseText.isEmpty {
-                responseText += "\n"
             }
 
         case "input_audio_buffer.speech_started":
@@ -463,6 +461,7 @@ class QwenOmniService: RealtimeAIService {
                 audioPlayerNode?.stop()
                 audioPlayerNode?.play() // 重置播放器，准备接收新音频
                 isModelSpeaking = false
+                responseText = transcriptFormatter.finalize(.model)
             }
 
         case "input_audio_buffer.speech_stopped":
@@ -471,12 +470,14 @@ class QwenOmniService: RealtimeAIService {
         case "response.cancelled":
             print("[QwenOmni] 响应被取消（用户打断）")
             isModelSpeaking = false
+            responseText = transcriptFormatter.finalize(.model)
 
         case "conversation.item.input_audio_transcription.completed":
             if let transcript = json["transcript"] as? String {
                 print("[QwenOmni] 用户语音转录: \(transcript)")
                 if !transcript.isEmpty {
-                    responseText += "🗣 \(transcript)\n"
+                    responseText = transcriptFormatter.replaceCumulative(transcript, speaker: .user)
+                    responseText = transcriptFormatter.finalize(.user)
                 }
             }
 

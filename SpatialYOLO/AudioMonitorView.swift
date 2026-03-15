@@ -13,38 +13,7 @@ struct AudioMonitorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-
-            // ── 标题行 + 开关按钮 ────────────────────────────────
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(sttDotColor)
-                    .frame(width: 6, height: 6)
-
-                Text("ENV LISTEN")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color.hudCyan.opacity(0.6))
-
-                Spacer()
-
-                Text(sttStatusLabel)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(sttDotColor.opacity(0.85))
-
-                // 独立开关按钮
-                Button(action: { monitor.toggle() }) {
-                    Text(monitor.isActive ? "STOP" : "START")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(monitor.isActive ? Color.hudAmber : Color.hudCyan)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(monitor.isActive ? Color.hudAmber : Color.hudCyan, lineWidth: 1)
-                                .opacity(0.7)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
+            headerView
 
             // ── 波形（仅 active 时显示）──────────────────────────
             if monitor.isActive {
@@ -52,23 +21,10 @@ struct AudioMonitorView: View {
                     .frame(height: 34)
                     .transition(.opacity.combined(with: .move(edge: .top)))
 
-                // ── 本地 STT 文字 ─────────────────────────────────
-                if !displayText.isEmpty {
-                    Text(displayText)
-                        .font(.system(size: 13, weight: .regular, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.88))
-                        .lineLimit(3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Color.white.opacity(0.05))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(Color.hudCyan.opacity(0.15), lineWidth: 1)
-                        )
-                        .cornerRadius(3)
-                        .transition(.opacity)
-                        .animation(.easeInOut(duration: 0.2), value: displayText)
+                // ── 本地 STT 文字：历史记录 + 当前输入分区显示 ─────────────
+                VStack(alignment: .leading, spacing: 6) {
+                    historySection
+                    liveInputSection
                 }
             }
         }
@@ -83,13 +39,110 @@ struct AudioMonitorView: View {
                         .stroke(Color.hudCyan.opacity(0.2), lineWidth: 1)
                 )
         )
+        .onAppear {
+            monitor.scheduleAutoStart(after: 1.2)
+        }
     }
 
     // MARK: - Helpers
 
-    private var displayText: String {
-        if !monitor.localTranscript.isEmpty { return monitor.localTranscript }
-        return monitor.committedTranscript
+    private var headerView: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(sttDotColor)
+                .frame(width: 6, height: 6)
+
+            Text("ENV LISTEN")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(Color.hudCyan.opacity(0.6))
+
+            Spacer()
+
+            Text(sttStatusLabel)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundColor(sttDotColor.opacity(0.85))
+        }
+    }
+
+    @ViewBuilder
+    private var historySection: some View {
+        if !monitor.committedLines.isEmpty {
+            Text("HISTORY")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(Color.white.opacity(0.45))
+                .padding(.horizontal, 2)
+
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(monitor.committedLines.enumerated()), id: \.offset) { index, line in
+                            historyLine(line, index: index)
+                        }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id("audioTranscriptAnchor")
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                }
+                .frame(height: 78)
+                .background(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(Color.hudCyan.opacity(0.15), lineWidth: 1)
+                )
+                .cornerRadius(3)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.2), value: historySignature)
+                .onAppear {
+                    proxy.scrollTo("audioTranscriptAnchor", anchor: .bottom)
+                }
+                .onChange(of: historySignature) {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        proxy.scrollTo("audioTranscriptAnchor", anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private var liveInputSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("LIVE INPUT")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(Color.hudCyan.opacity(0.65))
+                .padding(.horizontal, 2)
+
+            Text(monitor.localTranscript.isEmpty ? "Listening..." : monitor.localTranscript)
+                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                .foregroundColor(monitor.localTranscript.isEmpty ? Color.hudCyan.opacity(0.45) : Color.hudCyan.opacity(0.92))
+                .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Color.hudCyan.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.hudCyan.opacity(0.25), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    private func historyLine(_ line: String, index: Int) -> some View {
+        Text(line)
+            .font(.system(size: 13, weight: .regular, design: .monospaced))
+            .foregroundColor(.white.opacity(0.88))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.white.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .id(index)
+    }
+
+    private var historySignature: String {
+        monitor.committedLines.joined(separator: "\n")
     }
 
     private var sttDotColor: Color {

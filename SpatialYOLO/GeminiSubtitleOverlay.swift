@@ -21,7 +21,7 @@ struct GeminiSubtitleOverlay: View {
 
     /// 文本版本号（用于触发滚动）
     @State private var textVersion: Int = 0
-    @State private var lastTextLength: Int = 0
+    @State private var lastRenderedText: String = ""
     @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
@@ -81,9 +81,9 @@ struct GeminiSubtitleOverlay: View {
     private func startPolling() {
         pollTask = Task { @MainActor in
             while !Task.isCancelled {
-                let currentLength = geminiService.responseText.count
-                if currentLength != lastTextLength {
-                    lastTextLength = currentLength
+                let currentText = geminiService.responseText
+                if currentText != lastRenderedText {
+                    lastRenderedText = currentText
                     textVersion += 1
                 }
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -98,10 +98,11 @@ struct GeminiSubtitleOverlay: View {
 /// 显示 AI 的语音转写内容，自动滚动到最新文字
 /// 用于 AI Live 模式，字幕在用户正前方偏下位置独立悬浮
 struct TranslationSubtitleOverlay: View {
+    @EnvironmentObject var appModel: AppModel
     let geminiService: any RealtimeAIService
 
     @State private var textVersion: Int = 0
-    @State private var lastTextLength: Int = 0
+    @State private var lastRenderedText: String = ""
     @State private var pollTask: Task<Void, Never>?
     @State private var displayedText: String = ""
 
@@ -112,12 +113,12 @@ struct TranslationSubtitleOverlay: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(displayedText)
-                                .font(.system(size: 24, weight: .medium))
+                                .font(.system(size: appModel.language == .english ? 22 : 24, weight: .medium))
                                 .foregroundColor(.white)
                                 .multilineTextAlignment(.leading)
                                 .lineSpacing(6)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: 800, alignment: .leading)
+                                .frame(maxWidth: appModel.language == .english ? 860 : 800, alignment: .leading)
                                 .padding(.horizontal, 24)
                                 .padding(.vertical, 14)
 
@@ -126,7 +127,7 @@ struct TranslationSubtitleOverlay: View {
                                 .id("subtitleAnchor")
                         }
                     }
-                    .frame(maxWidth: 860, maxHeight: 120)
+                    .frame(maxWidth: 900, maxHeight: appModel.language == .english ? 170 : 120)
                     .onChange(of: textVersion) {
                         Task { @MainActor in
                             try? await Task.sleep(nanoseconds: 50_000_000)
@@ -156,14 +157,50 @@ struct TranslationSubtitleOverlay: View {
         pollTask = Task { @MainActor in
             while !Task.isCancelled {
                 let currentText = geminiService.responseText
-                if currentText.count != lastTextLength {
-                    lastTextLength = currentText.count
-                    displayedText = currentText
+                let nextText = subtitleText(from: currentText)
+                if nextText != lastRenderedText {
+                    lastRenderedText = nextText
+                    displayedText = nextText
                     textVersion += 1
                 }
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
             }
         }
     }
-}
 
+    private func subtitleText(from rawText: String) -> String {
+        let normalizedLines = rawText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let latestModelBlock = latestModelLines(from: normalizedLines)
+        let sourceLines = latestModelBlock.isEmpty ? normalizedLines : latestModelBlock
+        let limitedLines = Array(sourceLines.suffix(appModel.language == .english ? 5 : 5))
+        let joined = limitedLines.joined(separator: "\n")
+
+        guard appModel.language == .english else { return joined }
+
+        return joined
+            .replacingOccurrences(of: ". ", with: ".\n")
+            .replacingOccurrences(of: "? ", with: "?\n")
+            .replacingOccurrences(of: "! ", with: "!\n")
+    }
+
+    private func latestModelLines(from lines: [String]) -> [String] {
+        var currentBlock: [String] = []
+        var lastModelBlock: [String] = []
+
+        for line in lines {
+            if line.hasPrefix("🗣 ") {
+                currentBlock.removeAll(keepingCapacity: true)
+                continue
+            }
+
+            currentBlock.append(line)
+            lastModelBlock = currentBlock
+        }
+
+        return lastModelBlock
+    }
+}

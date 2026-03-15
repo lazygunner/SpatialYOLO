@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct ProjectDetailView: View {
+    @EnvironmentObject var appModel: AppModel
     @State private var session: SessionInfo
     @State private var frames: [FrameInfo] = []
     @State private var selectedFrame: FrameInfo?
@@ -29,7 +30,7 @@ struct ProjectDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
-                        Text("返回")
+                        Text(appModel.language == .english ? "Back" : "返回")
                     }
                     .font(.body)
                     .foregroundColor(.blue)
@@ -43,7 +44,7 @@ struct ProjectDetailView: View {
                 Spacer()
 
                 VStack(spacing: 2) {
-                    Text("会话 \(session.id)")
+                    Text(appModel.language == .english ? "Session \(session.id)" : "会话 \(session.id)")
                         .font(.headline)
                     
                     HStack(spacing: 4) {
@@ -63,7 +64,7 @@ struct ProjectDetailView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(frames.count) 帧")
+                    Text(appModel.language == .english ? "\(frames.count) Frames" : "\(frames.count) 帧")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Text(SessionRecorder.formattedSize(session.sizeBytes))
@@ -83,7 +84,7 @@ struct ProjectDetailView: View {
             if isLoading {
                 VStack {
                     Spacer()
-                    ProgressView("加载回忆数据...")
+                    ProgressView(appModel.language == .english ? "Loading memories..." : "加载回忆数据...")
                         .padding()
                     Spacer()
                 }
@@ -96,9 +97,13 @@ struct ProjectDetailView: View {
                         .controlSize(.extraLarge)
                         .tint(.purple)
                     
-                    Text(session.status == .pending ? "等待处理..." : "正在为您整理回忆...")
+                    Text(session.status == .pending
+                         ? (appModel.language == .english ? "Waiting to process..." : "等待处理...")
+                         : (appModel.language == .english ? "Organizing your memory..." : "正在为您整理回忆..."))
                         .font(.headline)
-                    Text("系统正在自动合并相似场景并为您生成专属卡通封面。")
+                    Text(appModel.language == .english
+                         ? "The system is merging similar scenes and generating a dedicated cartoon cover."
+                         : "系统正在自动合并相似场景并为您生成专属卡通封面。")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -132,12 +137,14 @@ struct ProjectDetailView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         // 检测上下文
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("检测结果")
+                            Text(appModel.language == .english ? "Detections" : "检测结果")
                                 .font(.caption.bold())
                                 .foregroundColor(.secondary)
 
                             ScrollView(.vertical, showsIndicators: true) {
-                                Text(frame.context.isEmpty ? "无检测数据" : frame.context)
+                                Text(frame.context.isEmpty
+                                     ? (appModel.language == .english ? "No detection data" : "无检测数据")
+                                     : frame.context)
                                     .font(.system(size: 12, design: .monospaced))
                                     .foregroundColor(.primary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -156,7 +163,7 @@ struct ProjectDetailView: View {
                                 HStack(spacing: 4) {
                                     Image(systemName: "sparkles")
                                         .foregroundColor(.purple)
-                                    Text("AI 回复")
+                                    Text(appModel.language == .english ? "AI Response" : "AI 回复")
                                         .font(.caption.bold())
                                         .foregroundColor(.purple)
                                 }
@@ -201,7 +208,7 @@ struct ProjectDetailView: View {
                         
                         HStack(spacing: 6) {
                             Image(systemName: "wand.and.stars")
-                            Text("我的回忆封面")
+                            Text(appModel.language == .english ? "Memory Cover" : "我的回忆封面")
                         }
                         .font(.headline)
                         .foregroundColor(.white)
@@ -211,7 +218,9 @@ struct ProjectDetailView: View {
                         .offset(x: 12, y: 12)
                     }
                     
-                    Text("由于您已经处理了这段回忆，您可以从下方选择具体的瞬间进行回顾。")
+                    Text(appModel.language == .english
+                         ? "This memory has already been processed. Choose a specific moment below to review it."
+                         : "由于您已经处理了这段回忆，您可以从下方选择具体的瞬间进行回顾。")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                     
@@ -221,7 +230,7 @@ struct ProjectDetailView: View {
                 
             } else {
                 ContentUnavailableView(
-                    "暂无帧数据",
+                    appModel.language == .english ? "No frames available" : "暂无帧数据",
                     systemImage: "photo"
                 )
                 .frame(maxHeight: 300)
@@ -317,7 +326,8 @@ struct ProjectDetailView: View {
 
     private var formattedDate: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.locale = appModel.language == .english ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
+        formatter.dateFormat = appModel.language == .english ? "MMM d, yyyy h:mm a" : "yyyy-MM-dd HH:mm:ss"
         return formatter.string(from: session.startTime)
     }
 }

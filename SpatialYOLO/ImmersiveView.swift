@@ -106,6 +106,15 @@ struct ImmersiveView: View {
         .task {
             appModel.setupVision()
             await appModel.startSession()
+            if appModel.activeFeature == .geminiLive {
+                appModel.audioInputMonitor.scheduleAutoStart(after: 1.2)
+            }
+        }
+        .onDisappear {
+            if appModel.activeFeature == .geminiLive {
+                appModel.audioInputMonitor.cancelScheduledAutoStart()
+                appModel.audioInputMonitor.stopIfNeeded()
+            }
         }
     }
 

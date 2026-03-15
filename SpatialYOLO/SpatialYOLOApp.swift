@@ -36,6 +36,7 @@ struct SpatialYOLOApp: App {
             if let sessionId,
                let session = SessionRecorder.listSessions().first(where: { $0.id == sessionId }) {
                 ProjectDetailView(session: session)
+                    .environment(appModel)
             }
         }
         .defaultSize(width: 900, height: 620)

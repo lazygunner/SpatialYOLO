@@ -40,6 +40,9 @@ class GeminiLiveService: RealtimeAIService {
 
     // MARK: - Private
 
+    private var transcriptFormatter = TranscriptConversationFormatter()
+    private var lastModelTranscriptText: String = ""
+    private var lastUserTranscriptText: String = ""
     private let apiKey: String
     private let model = "models/gemini-2.5-flash-native-audio-preview-12-2025"
     private var webSocketTask: URLSessionWebSocketTask?
@@ -132,7 +135,9 @@ class GeminiLiveService: RealtimeAIService {
 
         connectionState = .disconnected
         isModelSpeaking = false
-        responseText = ""
+        responseText = transcriptFormatter.reset()
+        lastModelTranscriptText = ""
+        lastUserTranscriptText = ""
         responseHistory = []
         sessionStartTime = nil
         sessionRemainingSeconds = 120
@@ -223,7 +228,9 @@ class GeminiLiveService: RealtimeAIService {
         sendJSON(message)
 
         // 清空当前响应，准备接收新回复
-        responseText = ""
+        responseText = transcriptFormatter.reset()
+        lastModelTranscriptText = ""
+        lastUserTranscriptText = ""
         isModelSpeaking = true
     }
 
@@ -373,6 +380,8 @@ class GeminiLiveService: RealtimeAIService {
     /// 处理 serverContent 响应
     @MainActor
     private func handleServerContent(_ content: [String: Any]) {
+        var fallbackModelTranscript: String?
+
         // 解析 modelTurn
         if let modelTurn = content["modelTurn"] as? [String: Any],
            let parts = modelTurn["parts"] as? [[String: Any]] {
@@ -386,7 +395,7 @@ class GeminiLiveService: RealtimeAIService {
 
                 // 音频转录
                 if let transcript = part["transcript"] as? String {
-                    responseText += transcript
+                    fallbackModelTranscript = transcript
                     isModelSpeaking = true
                     print("[GeminiLive] 收到 transcript: \(transcript.prefix(100))")
                 }
@@ -406,31 +415,71 @@ class GeminiLiveService: RealtimeAIService {
         // 处理 outputTranscription（模型语音转写，显示在 UI 上）
         if let transcription = content["outputTranscription"] as? [String: Any],
            let text = transcription["text"] as? String, !text.isEmpty {
-            responseText += text
+            responseText = mergeTranscriptUpdate(text, speaker: .model)
+            isModelSpeaking = true
             print("[GeminiLive] 模型转写: \(text)")
+        } else if let fallbackModelTranscript, !fallbackModelTranscript.isEmpty {
+            responseText = mergeTranscriptUpdate(fallbackModelTranscript, speaker: .model)
         }
 
         // 处理 inputTranscription（用户语音转写，显示在 UI 上）
         if let transcription = content["inputTranscription"] as? [String: Any],
            let text = transcription["text"] as? String, !text.isEmpty {
-            responseText += "🗣 \(text)"
+            responseText = mergeTranscriptUpdate(text, speaker: .user)
             print("[GeminiLive] 用户转写: \(text)")
         }
 
         // 检查 turnComplete
         if let turnComplete = content["turnComplete"] as? Bool, turnComplete {
             isModelSpeaking = false
+            responseText = transcriptFormatter.finalize(.model)
             print("[GeminiLive] 回合完成, responseText长度: \(responseText.count)")
-            if !responseText.isEmpty {
-                responseText += "\n"
-            }
         }
 
         // 检查是否被中断
         if let interrupted = content["interrupted"] as? Bool, interrupted {
             isModelSpeaking = false
+            responseText = transcriptFormatter.finalize(.model)
             print("[GeminiLive] 被中断")
         }
+    }
+
+    @MainActor
+    private func mergeTranscriptUpdate(_ text: String, speaker: TranscriptSpeaker) -> String {
+        let rawIncoming = text
+            .replacingOccurrences(of: "\r", with: "")
+            .trimmingCharacters(in: .newlines)
+        guard !rawIncoming.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return responseText
+        }
+
+        let previous: String
+        switch speaker {
+        case .model:
+            previous = lastModelTranscriptText
+        case .user:
+            previous = lastUserTranscriptText
+        }
+
+        let mergedText: String
+        if previous.isEmpty {
+            mergedText = rawIncoming
+        } else if rawIncoming == previous || rawIncoming.hasPrefix(previous) {
+            mergedText = rawIncoming
+        } else if previous.hasPrefix(rawIncoming) {
+            mergedText = rawIncoming
+        } else {
+            mergedText = previous + rawIncoming
+        }
+
+        switch speaker {
+        case .model:
+            lastModelTranscriptText = mergedText
+        case .user:
+            lastUserTranscriptText = mergedText
+        }
+
+        return transcriptFormatter.replaceCumulative(mergedText, speaker: speaker)
     }
 
     // MARK: - 会话计时器

@@ -117,6 +117,10 @@ struct ContentView: View {
             }
         }
         .frame(width: 880, height: 500)
+        .task {
+            appModel.requestLocalNetworkPermissionIfNeeded()
+            await CloudMemorySyncService.shared.syncCompletedSessionsIfNeeded()
+        }
     }
 
     // MARK: - 启动/切换功能
