@@ -2,6 +2,8 @@
 
 # SpatialYOLO
 
+[![Spatial YOLO 视频预览](https://img.youtube.com/vi/loWgQPtxxXs/0.jpg)](https://www.youtube.com/watch?v=loWgQPtxxXs)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-visionOS-blue)](https://developer.apple.com/visionos/)
 [![Xcode](https://img.shields.io/badge/Xcode-16.2%2B-blue)](https://developer.apple.com/xcode/)
