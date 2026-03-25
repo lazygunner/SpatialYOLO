@@ -32,7 +32,6 @@ public class AppModel: ObservableObject {
     enum FeatureMode {
         case spatialYOLO    // 双目 YOLO 检测 + 深度估计
         case geminiLive     // Gemini Live 交互助手
-        case mahjong        // 麻将牌检测 + AI 助手
     }
     var activeFeature: FeatureMode = .spatialYOLO
     
@@ -116,17 +115,12 @@ public class AppModel: ObservableObject {
     private var hasCalibration = false
     var actualBaseline: Float = 0.065   // 双目基线（米），由标定流程更新
 
-    // 深度来源
-    enum DepthSource { case stereo, monocular }
-    var depthSource: DepthSource = .stereo
-    var depthModelSize: Int = 512    // 当前深度图宽度（stereo=512, monocular=518）
-    var depthModelHeight: Int = 512  // 当前深度图高度（stereo=512, monocular=392）
+    var depthModelSize: Int = 512    // 当前深度图宽度
+    var depthModelHeight: Int = 512  // 当前深度图高度
 
     // 深度估计模型和像素缓冲池
     private var depthModel: RaftStereo512?
-    private var monocularDepthModel: MLModel?   // DepthAnythingV2Small，用通用 MLModel 避免编译依赖
     private var pixelBufferPool: CVPixelBufferPool?          // 512×512 for RaftStereo
-    private var monocularPixelBufferPool: CVPixelBufferPool? // 518×518 for DepthAnything
     private var stackedBufferPool: CVPixelBufferPool?
     private let ciContext = CIContext()
 
@@ -144,38 +138,7 @@ public class AppModel: ObservableObject {
     var bufferSize: CGSize = .zero
     var classNames: [String] = []
 
-    // 麻将检测相关（单一数组避免并行数组竞态）
-    struct MahjongTile: Identifiable {
-        let id = UUID()
-        let box: CGRect        // Vision 归一化坐标
-        let className: String  // 中文显示名（一条、二万...）
-        let classCode: String  // 类别编码（1B、2C...用于 emoji 映射）
-        let confidence: Float  // 置信度百分比
-    }
-    var mahjongDetections: [MahjongTile] = []   // 当前帧检测结果
-    var requestsMahjong = [VNRequest]()
 
-    // 牌局记忆
-    var mahjongGameActive: Bool = false          // 牌局是否进行中
-    var mahjongHandMemory: [String] = []         // 记忆中的手牌（类别编码，可重复）
-    /// 每张牌连续未检测到的帧数（用于判断是否被打出）
-    var mahjongAbsenceCount: [String: Int] = [:]
-    /// 连续未检测到多少帧后判定为已打出
-    let mahjongAbsenceThreshold = 15     // 约 0.5 秒 @30fps
-
-    /// 手牌状态：等待摸牌（13张上限）或等待打牌（14张上限）
-    enum MahjongHandState {
-        case waitingToDraw      // 待摸牌，最多 13 张
-        case waitingToDiscard   // 待打牌，最多 14 张
-    }
-    var mahjongHandState: MahjongHandState = .waitingToDiscard
-    var mahjongMaxHandTiles: Int { mahjongHandState == .waitingToDiscard ? 14 : 13 }
-
-    /// 控制面板是否展开（收起/展开按钮控制）
-    var mahjongPanelExpanded: Bool = true
-
-    // MARK: - 打牌记录（其他玩家）
-    var discardRecords: [PlayerDiscardRecord] = []   // 按玩家分组的打牌记录
     
     var currentIntrinsics: simd_float3x3 = simd_float3x3(.zero)
     var currentExtrinsics: simd_float4x4 = simd_float4x4(.zero)
@@ -238,33 +201,6 @@ public class AppModel: ObservableObject {
         }
     }
 
-    /// 获取当前语言下的麻将模式系统提示词
-    func mahjongSystemInstruction() -> String {
-        if language == .english {
-            return """
-            You are a Mahjong game audio assistant, observing the game through Apple Vision Pro.
-            Core Task: Listen to nearby players, identify tile discards and actions, and distinguish between Players A, B, and C.
-            Whenever a move is detected, output using the following format line by line:
-            [Player A] Discard 3-Character
-            [Player B] Pong
-            [Player C] Kong East Wind
-            [Player A] Mahjong (Win)
-            Rules: Only output game-related info. Ignore small talk. Stay silent initially. Respond in concise English.
-            """
-        } else {
-            return """
-            你是麻将牌局语音监听助手，通过 Apple Vision Pro 旁听牌局。
-            核心任务：仔细听取周围玩家的声音，识别报牌和动作，区分玩家A/B/C。
-            每当检测到打牌动作，必须用以下格式逐行输出（不得省略）：
-            [玩家A] 打 三万
-            [玩家B] 碰
-            [玩家C] 杠 东风
-            [玩家A] 胡
-            规则：只输出打牌相关信息，忽略闲聊；初始静默监听，不主动发言；极简中文。
-            """
-        }
-    }
-
     // MARK: - AI 服务
     var activeProvider: AIProvider = .gemini
     var geminiService = GeminiLiveService(apiKey: AppModel.loadGeminiAPIKey())
@@ -318,8 +254,6 @@ public class AppModel: ObservableObject {
     // MARK: - 音频输入监测（波形 + 本地 STT）
     var audioInputMonitor = AudioInputMonitor()
 
-    // MARK: - 麻将牌型分析服务（独立 LLM）
-    var mahjongAnalysisService = MahjongAnalysisService(apiKey: AppModel.loadQwenAPIKey())
 
     // MARK: - 企业许可证
     var isLicenseValid: Bool = false
@@ -416,22 +350,7 @@ public class AppModel: ObservableObject {
         loadConfigString(forKey: "OPENCLAW_WORKSPACE_IMAGE_PATH") ?? "/Users/gunner/.openclaw/workspace/image.png"
     }
 
-    nonisolated static func loadMemorySyncBaseURL() -> String {
-        guard let value = loadConfigString(forKey: "MEMORY_SYNC_BASE_URL"),
-              !value.isEmpty else {
-            return ""
-        }
-        return value
-    }
 
-    nonisolated static func loadMemorySyncToken() -> String {
-        guard let value = loadConfigString(forKey: "MEMORY_SYNC_TOKEN"),
-              value != "YOUR_TOKEN_HERE",
-              !value.isEmpty else {
-            return ""
-        }
-        return value
-    }
 
     private nonisolated static func loadConfigString(forKey key: String) -> String? {
         guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
@@ -443,7 +362,7 @@ public class AppModel: ObservableObject {
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // 初始化深度模型（双目 + 单目）
+    // 初始化深度模型（双目 RaftStereo512）
     private func initializeDepthModel() {
         let config = MLModelConfiguration()
         config.computeUnits = .cpuAndGPU
@@ -453,23 +372,6 @@ public class AppModel: ObservableObject {
             print("RaftStereo512 初始化成功")
         } catch {
             print("RaftStereo512 初始化失败: \(error)")
-        }
-
-        // 单目深度：从 Bundle 动态加载，避免对自动生成类的编译依赖
-        // 需先运行 doc/convert_depth_anything.py 并将产物加入 Xcode Target
-        // 下载：https://huggingface.co/apple/coreml-depth-anything-v2-small
-        // 推荐使用 DepthAnythingV2SmallF16.mlpackage（49.8 MB）
-        let monocularModelName = "DepthAnythingV2SmallF16"
-        if let modelURL = Bundle.main.url(forResource: monocularModelName, withExtension: "mlmodelc") {
-            do {
-                monocularDepthModel = try MLModel(contentsOf: modelURL, configuration: config)
-                print("\(monocularModelName) 初始化成功")
-            } catch {
-                print("\(monocularModelName) 加载失败: \(error.localizedDescription)")
-            }
-        } else {
-            print("\(monocularModelName).mlmodelc 未找到，单目深度不可用")
-            print("  → 从 https://huggingface.co/apple/coreml-depth-anything-v2-small 下载并添加到 Xcode Target")
         }
     }
     
@@ -593,15 +495,12 @@ public class AppModel: ObservableObject {
 
         return bufferOut
     }
-    
+
     // MARK: - 深度估计调度
 
-    /// 根据 depthSource 选择双目或单目深度估计
+    /// 双目深度估计
     private func processDepthEstimation() async {
-        switch depthSource {
-        case .stereo:    await processStereoDepth()
-        case .monocular: await processMonocularDepth()
-        }
+        await processStereoDepth()
     }
 
     // 双目深度（RaftStereo512）：同时需要左右两路画面
@@ -631,96 +530,6 @@ public class AppModel: ObservableObject {
         } catch {
             print("双目深度估计错误: \(error)")
         }
-    }
-
-    // 单目深度（Depth Anything V2 Small）：只需左摄像头
-    // Apple 官方 CoreML 模型输出 depth 为灰度 CVPixelBuffer（不是 MLMultiArray）
-    // 模型：https://huggingface.co/apple/coreml-depth-anything-v2-small
-    private func processMonocularDepth() async {
-        guard let model = monocularDepthModel,
-              let leftBuffer = pixelBufferLeft else { return }
-
-        guard let rescaled = rescaleImageMonocular(pixelBuffer: leftBuffer) else { return }
-
-        do {
-            let inputProvider = try MLDictionaryFeatureProvider(
-                dictionary: ["image": MLFeatureValue(pixelBuffer: rescaled.0)]
-            )
-            let outputProvider = try await model.prediction(from: inputProvider)
-            guard let depthFeature = outputProvider.featureValue(for: "depth") else { return }
-
-            if let depthBuffer = depthFeature.imageBufferValue {
-                // 正常路径：Apple 模型输出灰度 CVPixelBuffer
-                // 模型输出视差方向（亮=近），翻转后符合深度图直觉（亮=远）
-                let ci = CIImage(cvPixelBuffer: depthBuffer).applyingFilter("CIColorInvert")
-                if let cg = ciContext.createCGImage(ci, from: ci.extent) {
-                    self.depthImage = UIImage(cgImage: cg)
-                }
-                storeDepthDataFromGrayscale(depthBuffer,
-                                            scale: rescaled.1,
-                                            cropX: rescaled.2,
-                                            cropY: rescaled.3)
-            } else if let depthArray = depthFeature.multiArrayValue {
-                // 备用路径：MLMultiArray 输出（自定义转换模型）
-                ensurePool(&monocularPixelBufferPool, width: 518, height: 392)
-                if let pool = monocularPixelBufferPool,
-                   let depthBuffer = multiArrayToRGBA(depthArray, pool: pool) {
-                    self.depthImage = convertToUIImage(pixelBuffer: depthBuffer)
-                }
-                storeDepthData(depthArray, modelSize: 518,
-                               scale: rescaled.1, cropX: rescaled.2, cropY: rescaled.3)
-            }
-        } catch {
-            print("单目深度估计错误: \(error)")
-        }
-    }
-
-    /// 缩放图像到 518×392（Depth Anything V2 固定输入尺寸）
-    /// 相机帧 1920×1440（AR=1.333）与模型输入 518×392（AR=1.321）接近，只裁极少量宽度
-    private func rescaleImageMonocular(pixelBuffer: CVPixelBuffer) -> (CVPixelBuffer, Float, Int, Int)? {
-        let targetW = 518, targetH = 392
-        let targetAR = Float(targetW) / Float(targetH)  // 1.3214
-
-        let srcW = CVPixelBufferGetWidth(pixelBuffer)
-        let srcH = CVPixelBufferGetHeight(pixelBuffer)
-
-        // 以高度为基准计算裁剪宽度，使宽高比与模型输入一致
-        let cropW = Int(Float(srcH) * targetAR + 0.5)
-        let cropH = srcH
-        let cropX = (srcW - cropW) / 2
-        let cropY = 0
-
-        let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
-        let scale    = Float(targetH) / Float(cropH)   // 统一缩放系数（宽高相同）
-
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-
-        let translate      = CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y)
-        let scaleTransform = CGAffineTransform(scaleX: CGFloat(scale), y: CGFloat(scale))
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-            .cropped(to: cropRect)
-            .transformed(by: translate.concatenating(scaleTransform))
-
-        var tempPool: CVPixelBufferPool?
-        let attrs: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: targetW,
-            kCVPixelBufferHeightKey as String: targetH,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
-        ]
-        CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &tempPool)
-        guard let pool = tempPool else { return nil }
-
-        var outputBuffer: CVPixelBuffer?
-        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outputBuffer)
-        guard let output = outputBuffer else { return nil }
-
-        ciContext.render(ciImage, to: output,
-                         bounds: CGRect(x: 0, y: 0, width: targetW, height: targetH),
-                         colorSpace: CGColorSpaceCreateDeviceRGB())
-
-        return (output, scale, cropX, cropY)
     }
 
     // MARK: - 深度距离融合
@@ -756,67 +565,7 @@ public class AppModel: ObservableObject {
         updateObjectDepths()
     }
 
-    /// 从灰度 CVPixelBuffer 提取深度值并存储（Apple 官方模型输出格式）
-    /// 支持 OneComponent32Float（float32）和 OneComponent8（uint8 归一化）两种像素格式
-    private func storeDepthDataFromGrayscale(_ depthBuffer: CVPixelBuffer,
-                                             scale: Float,
-                                             cropX: Int,
-                                             cropY: Int) {
-        let width  = CVPixelBufferGetWidth(depthBuffer)
-        let height = CVPixelBufferGetHeight(depthBuffer)
-        let pixelFormat = CVPixelBufferGetPixelFormatType(depthBuffer)
-        let count  = width * height
 
-        CVPixelBufferLockBaseAddress(depthBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(depthBuffer, .readOnly) }
-
-        guard let baseAddr = CVPixelBufferGetBaseAddress(depthBuffer) else { return }
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthBuffer)
-
-        var values = [Float](repeating: 0, count: count)
-
-        if pixelFormat == kCVPixelFormatType_OneComponent32Float {
-            let floatPtr = baseAddr.assumingMemoryBound(to: Float.self)
-            let stride   = bytesPerRow / MemoryLayout<Float>.size
-            for y in 0..<height {
-                for x in 0..<width {
-                    values[y * width + x] = floatPtr[y * stride + x]
-                }
-            }
-        } else {
-            // 8-bit 灰度（OneComponent8），归一化到 [0, 1]
-            let uint8Ptr = baseAddr.assumingMemoryBound(to: UInt8.self)
-            for y in 0..<height {
-                for x in 0..<width {
-                    values[y * width + x] = Float(uint8Ptr[y * bytesPerRow + x]) / 255.0
-                }
-            }
-        }
-
-        let n = vDSP_Length(count)
-        var minVal: Float = 0, maxVal: Float = 0
-        values.withUnsafeMutableBufferPointer {
-            vDSP_minv($0.baseAddress!, 1, &minVal, n)
-            vDSP_maxv($0.baseAddress!, 1, &maxVal, n)
-        }
-
-        // Depth Anything V2 输出视差方向（值越大越近），翻转为深度约定（值越大越远）
-        // 翻转后：depthMinVal = 最近, depthMaxVal = 最远，与 RAFT 语义一致
-        let rMin = minVal, rMax = maxVal
-        for i in 0..<count { values[i] = rMax + rMin - values[i] }
-        // 翻转不改变值域范围，只改变空间分布，min/max 不变
-
-        self.rawDepthValues   = values
-        self.depthMinVal      = minVal
-        self.depthMaxVal      = maxVal
-        self.depthModelSize   = width
-        self.depthModelHeight = height
-        self.depthCropX       = cropX
-        self.depthCropY       = cropY
-        self.depthScaleFactor = scale
-
-        updateObjectDepths()
-    }
 
     // MARK: - 相机标定参数捕获
 
@@ -908,12 +657,6 @@ public class AppModel: ObservableObject {
 
         // 估算实际距离
         let distanceMeters: Float? = {
-            if depthSource == .monocular {
-                // 单目：无绝对基准，线性映射到经验范围 [0.30m, 8.00m]
-                // normalized=0(近)→0.30m, normalized=1(远)→8.00m
-                let est = 0.30 + normalized * (8.00 - 0.30)
-                return est
-            }
             // 双目：立体视觉公式 depth = fx * baseline / disparity
             // disparity（原始图像像素）≈ abs(median) / depthScaleFactor
 
@@ -1017,7 +760,7 @@ public class AppModel: ObservableObject {
                 self.pixelBufferLeft = leftSample[0].pixelBuffer
                 self.capturedImageLeft = self.convertToUIImage(pixelBuffer: self.pixelBufferLeft)
 
-                // 记录摄像头分辨率（用于麻将检测坐标换算）
+                // 记录摄像头分辨率（用于坐标换算）
                 if let pb = self.pixelBufferLeft {
                     let w = CVPixelBufferGetWidth(pb)
                     let h = CVPixelBufferGetHeight(pb)
@@ -1041,28 +784,20 @@ public class AppModel: ObservableObject {
                     }
                 }
 
-                // 麻将模式：麻将牌 YOLO 检测
-                if activeFeature == .mahjong {
-                    let leftBuffer = self.pixelBufferLeft!
-                    let mahjongRequests = self.requestsMahjong
-                    Task.detached {
-                        let handler = VNImageRequestHandler(cvPixelBuffer: leftBuffer)
-                        try? handler.perform(mahjongRequests)
-                    }
-                }
             }
 
-            // Spatial YOLO 模式：处理右摄像头 + 深度估计
-            if activeFeature == .spatialYOLO {
-                if !rightSample.isEmpty {
-                    self.pixelBufferRight = rightSample[0].pixelBuffer
-                    self.capturedImageRight = self.convertToUIImage(pixelBuffer: self.pixelBufferRight)
+            // 读取右摄像头数据（UI 显示需要）
+            if !rightSample.isEmpty {
+                self.pixelBufferRight = rightSample[0].pixelBuffer
+                self.capturedImageRight = self.convertToUIImage(pixelBuffer: self.pixelBufferRight)
 
-                    // 首帧捕获相机标定参数（内参 + 基线）
-                    if !self.hasCalibration {
-                        self.captureCalibration(leftSample: leftSample[0], rightSample: rightSample[0])
-                    }
+                // 首帧捕获相机标定参数（内参 + 基线）
+                if !self.hasCalibration {
+                    self.captureCalibration(leftSample: leftSample[0], rightSample: rightSample[0])
+                }
 
+                // Spatial YOLO 模式才运行右摄像头的 YOLO 模型检测
+                if activeFeature == .spatialYOLO {
                     let rightBuffer = self.pixelBufferRight!
                     let rightRequests = self.requestsRight
                     Task.detached {
@@ -1070,32 +805,27 @@ public class AppModel: ObservableObject {
                         try? handler.perform(rightRequests)
                     }
                 }
+            }
 
-                // 深度估计：双目需要左右都有数据；单目只需左摄像头
-                let canRunDepth: Bool
-                switch depthSource {
-                case .stereo:    canRunDepth = !leftSample.isEmpty && !rightSample.isEmpty
-                case .monocular: canRunDepth = !leftSample.isEmpty
-                }
-                if canRunDepth {
+            // 深度估计（专属 Spatial YOLO 模式且需要双目齐整）
+            if activeFeature == .spatialYOLO {
+                if !leftSample.isEmpty && !rightSample.isEmpty {
                     await processDepthEstimation()
                 }
             }
 
-            // Gemini Live / 麻将模式：定时采样帧发送给 AI 服务
-            // geminiLive: 在 Auto 模式或检测到语音时发送，1 秒/帧；mahjong: 5 秒/帧
-            if (activeFeature == .geminiLive || activeFeature == .mahjong),
+            // Gemini Live 模式：定时采样帧发送给 AI 服务
+            // geminiLive: 在 Auto 模式或检测到语音时发送，1 秒/帧
+            if activeFeature == .geminiLive,
                isGeminiActive, let leftBuffer = self.pixelBufferLeft {
                 
-                let frameInterval: TimeInterval = (activeFeature == .mahjong) ? 5.0 : 1.0
+                let frameInterval: TimeInterval = 1.0
                 let timeSinceLastGemini = currentTime.timeIntervalSince(lastGeminiSendTime)
                 
                 if timeSinceLastGemini >= frameInterval {
                     var shouldSend = false
                     
-                    if activeFeature == .mahjong {
-                        shouldSend = true
-                    } else if autoNarrate {
+                    if autoNarrate {
                         // Auto 模式：始终开启采样，由内部 MSE/标签逻辑决定是否真正触发语音解说
                         shouldSend = true
                     } else {

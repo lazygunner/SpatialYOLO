@@ -1,9 +1,7 @@
 Enterprise.license
-*.mlpackage
 *.license
 Build/
 Enterprise-1.license
 Config.plist
 scripts/.openclaw_ws_device.json
-cloud-memory-service
 .codex-tmp

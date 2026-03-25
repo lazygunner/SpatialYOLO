@@ -2,6 +2,10 @@
 
 # SpatialYOLO
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-visionOS-blue)](https://developer.apple.com/visionos/)
+[![Xcode](https://img.shields.io/badge/Xcode-16.2%2B-blue)](https://developer.apple.com/xcode/)
+
 Apple Vision Pro 上的实时物体检测与 AI 视觉助手。
 
 - **Spatial YOLO** — 双目摄像头 + YOLOv11n 物体检测 + 立体深度估计
@@ -90,38 +94,71 @@ cp SpatialYOLO/Config.plist.example SpatialYOLO/Config.plist
 - **字幕：** AI 回复文字以打字机效果叠加显示在视频画面上
 - **服务商切换：** 在控制面板中切换 Gemini 和 Qwen
 
-### 5. 开发设计文档
+## 四、OpenClaw 淘宝自动加购（可选）
 
-- [Auto 模式灵敏度与 OpenClaw 集成方案](doc/auto-narrate-openclaw-plan.md)
-- [OpenClaw 图片到淘宝加购链路整理](doc/openclaw-taobao-image-workflow.md)
+OpenClaw 是一个可选的配套功能，让 AI Live 助手能通过分析摄像头画面，自动搜索商品并添加到淘宝购物车。
 
-### 6. 云端记忆同步（Cloud Run + Cloud Storage + PostgreSQL）
+### 工作原理
 
-应用现已支持将本地处理完成的回忆同步到 GCP：
+1. Vision Pro 应用捕获摄像头帧，发送到 Mac 上运行的**工作区图片服务器**
+2. 服务器接收图片后，启动本地 Node.js Playwright 脚本进行淘宝图搜，并将找到的商品加入购物车
+3. 进度实时轮询并显示在 AI Live 控制面板中
 
-- **稳定用户 ID：** 设备首次运行时生成 UUID，并持久化到 Keychain
-- **图片存储：** 会话帧与卡通封面上传到 Google Cloud Storage
-- **数据库表：** 会话元数据与帧上下文写入 `memory_sessions` 表
-- **后端服务：** 可直接部署的 Cloud Run 服务位于 [`cloud-memory-service`](/Volumes/Data/workspace/VP/SpatialYOLO1/cloud-memory-service)
+### 启动工作区图片服务器（Mac 端）
 
-在 `SpatialYOLO/Config.plist` 中补充客户端同步配置：
+```bash
+# 安装依赖（首次运行）
+cd scripts/taobao-image-search
+npm install
 
-```xml
-<key>MEMORY_SYNC_BASE_URL</key>
-<string>https://your-cloud-run-service.run.app</string>
-<key>MEMORY_SYNC_TOKEN</key>
-<string>your-shared-token</string>
+# 启动服务器
+OPENCLAW_TOKEN=your-token bash scripts/run_openclaw_workspace_image_server.sh
 ```
 
-后端环境变量：
+服务器默认监听 `http://0.0.0.0:18888`。
 
-- `POSTGRES_DSN`
-- `GCS_BUCKET`
-- `MEMORY_SYNC_TOKEN`
+**关键环境变量：**
 
-Cloud Run 服务启动时会自动创建 `memory_sessions` 表。表结构定义见 [`cloud-memory-service/schema.sql`](/Volumes/Data/workspace/VP/SpatialYOLO1/cloud-memory-service/schema.sql)。
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `WORKSPACE_IMAGE_SERVER_PORT` | `18888` | HTTP 监听端口 |
+| `OPENCLAW_TOKEN` | — | 共享认证 Token |
+| `OPENCLAW_BASE_URL` | `http://127.0.0.1:18789` | OpenClaw 网关地址 |
+| `OPENCLAW_IMAGE_PATH` | `~/.openclaw/workspace/image.png` | 图片上传保存路径 |
+| `TAOBAO_IMAGE_SEARCH_HEADLESS` | `0` | 设置为 `1` 启用无头模式 |
 
-## 四、构建与运行
+**服务器接口：**
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/health` | 健康检查 |
+| `POST` | `/upload-image` | 接收来自 Vision Pro 的 JPEG 帧 |
+| `POST` | `/tasks/openclaw` | 创建新的加购任务 |
+| `GET` | `/tasks/:id` | 查询任务状态 |
+
+### Vision Pro 端配置
+
+在 `SpatialYOLO/Config.plist` 中添加以下配置项：
+
+```xml
+<key>OPENCLAW_UPLOAD_BASE_URL</key>
+<string>http://your-mac-ip:18888</string>
+<key>OPENCLAW_TOKEN</key>
+<string>your-token</string>
+```
+
+### 淘宝登录
+
+脚本使用 Playwright 保存的登录状态访问淘宝。首次运行时需要保存登录状态：
+
+```bash
+cd scripts/taobao-image-search
+node save-taobao-cookie.js
+```
+
+按浏览器提示登录淘宝后，会话状态将被保存，后续运行无需重复登录。
+
+## 五、构建与运行
 
 环境要求：Xcode 16.2+、visionOS SDK、Apple 企业证书（用于主摄像头访问）。
 
@@ -134,3 +171,11 @@ open SpatialYOLO.xcodeproj
 
 # 3. 选择 visionOS 设备并运行
 ```
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 许可证
+
+本项目采用 MIT 许可证，详见 [LICENSE](LICENSE)。

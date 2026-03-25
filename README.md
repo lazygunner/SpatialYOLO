@@ -2,6 +2,10 @@
 
 # SpatialYOLO
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-visionOS-blue)](https://developer.apple.com/visionos/)
+[![Xcode](https://img.shields.io/badge/Xcode-16.2%2B-blue)](https://developer.apple.com/xcode/)
+
 Real-time object detection and AI visual assistant on Apple Vision Pro.
 
 - **Spatial YOLO** — Stereo camera + YOLOv11n object detection + stereo depth estimation
@@ -90,33 +94,71 @@ Add `Config.plist` to the Xcode project's target build resources so it can be re
 - **Subtitles:** AI response text displayed as typewriter-effect overlay on the video feed
 - **Provider Switch:** Toggle between Gemini and Qwen in the control panel
 
-### 5. Cloud Memory Sync (Cloud Run + Cloud Storage + PostgreSQL)
+## IV. OpenClaw Shopping Cart Automation (Optional)
 
-The app now supports syncing processed local memories to a GCP backend:
+OpenClaw is an optional companion feature that lets the AI Live assistant automatically search for and add items to your Taobao shopping cart by analyzing what's visible through the camera.
 
-- **Stable user ID:** generated once on-device and stored in Keychain
-- **Image storage:** processed session frames + cartoon cover uploaded to Google Cloud Storage
-- **Database table:** session metadata and frame context upserted into the `memory_sessions` table
-- **Backend:** deployable Cloud Run service in [`cloud-memory-service`](/Volumes/Data/workspace/VP/SpatialYOLO1/cloud-memory-service)
+### How it works
 
-Configure the app-side sync endpoint in `SpatialYOLO/Config.plist`:
+1. The Vision Pro app captures a camera frame and sends it to the **workspace image server** running on your Mac
+2. The server receives the image, launches a local Node.js Playwright script to search Taobao by image, and adds the found item to cart
+3. Progress is polled in real-time and displayed in the AI Live control panel
 
-```xml
-<key>MEMORY_SYNC_BASE_URL</key>
-<string>https://your-cloud-run-service.run.app</string>
-<key>MEMORY_SYNC_TOKEN</key>
-<string>your-shared-token</string>
+### Start the workspace image server (Mac)
+
+```bash
+# Install dependencies (first time only)
+cd scripts/taobao-image-search
+npm install
+
+# Start the server
+OPENCLAW_TOKEN=your-token bash scripts/run_openclaw_workspace_image_server.sh
 ```
 
-Backend environment variables:
+The server listens on `http://0.0.0.0:18888` by default.
 
-- `POSTGRES_DSN`
-- `GCS_BUCKET`
-- `MEMORY_SYNC_TOKEN`
+**Key environment variables:**
 
-The Cloud Run service auto-creates the `memory_sessions` table on startup. The SQL definition is in [`cloud-memory-service/schema.sql`](/Volumes/Data/workspace/VP/SpatialYOLO1/cloud-memory-service/schema.sql).
+| Variable | Default | Description |
+|---|---|---|
+| `WORKSPACE_IMAGE_SERVER_PORT` | `18888` | HTTP listen port |
+| `OPENCLAW_TOKEN` | — | Shared auth token |
+| `OPENCLAW_BASE_URL` | `http://127.0.0.1:18789` | OpenClaw gateway URL |
+| `OPENCLAW_IMAGE_PATH` | `~/.openclaw/workspace/image.png` | Where uploaded images are saved |
+| `TAOBAO_IMAGE_SEARCH_HEADLESS` | `0` | Set to `1` for headless mode |
 
-## IV. Build & Run
+**Server endpoints:**
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `POST` | `/upload-image` | Receive JPEG frame from Vision Pro |
+| `POST` | `/tasks/openclaw` | Queue a new shopping cart task |
+| `GET` | `/tasks/:id` | Poll task status |
+
+### Configure on Vision Pro side
+
+Add these keys to `SpatialYOLO/Config.plist`:
+
+```xml
+<key>OPENCLAW_UPLOAD_BASE_URL</key>
+<string>http://your-mac-ip:18888</string>
+<key>OPENCLAW_TOKEN</key>
+<string>your-token</string>
+```
+
+### Taobao login
+
+The script uses a saved Playwright storage state for Taobao login. To save your login state:
+
+```bash
+cd scripts/taobao-image-search
+node save-taobao-cookie.js
+```
+
+Follow the browser prompt to log in to Taobao, then the session will be saved for future runs.
+
+## V. Build & Run
 
 Requirements: Xcode 16.2+, visionOS SDK, Apple Enterprise Certificate (for main camera access).
 
@@ -129,3 +171,11 @@ open SpatialYOLO.xcodeproj
 
 # 3. Select visionOS device and run
 ```
+
+## Contributing
+
+Contributions are welcome! Feel free to open issues or pull requests.
+
+## License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.

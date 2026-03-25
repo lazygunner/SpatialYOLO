@@ -47,7 +47,7 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 140)
+                .frame(width: 180)
                 .padding(.top, 10)
                 .padding(.trailing, 20)
                 .tint(.hudAmber)
@@ -55,27 +55,53 @@ struct ContentView: View {
             .padding(.top, 24)
             .padding(.bottom, 20)
 
-            // AI Live 卡片（支持 Gemini / Qwen）
-            FeatureCard(
-                icon: "sparkles",
-                title: appModel.language == .english ? "Live AI Agent" : "Live AI Agent",
-                subtitle: appModel.language == .english ? "Interactive Visual Assistant" : "交互式视觉助手",
-                description: appModel.language == .english 
-                    ? "Real-time visual + voice dialogue, saving daily memories" 
-                    : "实时画面+语音双向对话，保存日常记忆",
-                gradient: LinearGradient(
-                    colors: [
-                        Color.purple.opacity(0.6),
-                        Color.pink.opacity(0.4)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                isActive: appModel.immersiveSpaceState == .open
-                    && appModel.activeFeature == .geminiLive,
-                isDisabled: appModel.immersiveSpaceState == .inTransition
-            ) {
-                await launchFeature(.geminiLive)
+            // 双入口卡片并排
+            HStack(spacing: 20) {
+                // Spatial YOLO (双目视频流) 卡片
+                FeatureCard(
+                    icon: "camera.viewfinder",
+                    title: appModel.language == .english ? "Spatial YOLO" : "双目视频流",
+                    subtitle: appModel.language == .english ? "Stereo Vision + Detection" : "立体视觉 + 物体检测",
+                    description: appModel.language == .english
+                        ? "Real-time 3D object detection with depth estimation"
+                        : "实时 3D 空间物体检测与深度感知",
+                    gradient: LinearGradient(
+                        colors: [
+                            Color.blue.opacity(0.6),
+                            Color.cyan.opacity(0.4)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    isActive: appModel.immersiveSpaceState == .open
+                        && appModel.activeFeature == .spatialYOLO,
+                    isDisabled: appModel.immersiveSpaceState == .inTransition
+                ) {
+                    await launchFeature(.spatialYOLO)
+                }
+
+                // AI Live 卡片（支持 Gemini / Qwen）
+                FeatureCard(
+                    icon: "sparkles",
+                    title: appModel.language == .english ? "Live AI Agent" : "Live AI Agent",
+                    subtitle: appModel.language == .english ? "Interactive Visual Assistant" : "交互式视觉助手",
+                    description: appModel.language == .english 
+                        ? "Real-time visual + voice dialogue, saving daily memories" 
+                        : "实时画面+语音双向对话，保存日常记忆",
+                    gradient: LinearGradient(
+                        colors: [
+                            Color.purple.opacity(0.6),
+                            Color.pink.opacity(0.4)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    isActive: appModel.immersiveSpaceState == .open
+                        && appModel.activeFeature == .geminiLive,
+                    isDisabled: appModel.immersiveSpaceState == .inTransition
+                ) {
+                    await launchFeature(.geminiLive)
+                }
             }
             .padding(.horizontal, 30)
 
@@ -100,13 +126,11 @@ struct ContentView: View {
                             switch appModel.activeFeature {
                             case .spatialYOLO: return "Spatial YOLO Running"
                             case .geminiLive: return "AI Live Running"
-                            case .mahjong: return "Mahjong AI Running"
                             }
                         } else {
                             switch appModel.activeFeature {
                             case .spatialYOLO: return "Spatial YOLO 运行中"
                             case .geminiLive: return "AI Live 运行中"
-                            case .mahjong: return "Mahjong AI 运行中"
                             }
                         }
                     }())
@@ -119,7 +143,6 @@ struct ContentView: View {
         .frame(width: 880, height: 500)
         .task {
             appModel.requestLocalNetworkPermissionIfNeeded()
-            await CloudMemorySyncService.shared.syncCompletedSessionsIfNeeded()
         }
     }
 
@@ -145,7 +168,8 @@ struct ContentView: View {
         appModel.activeFeature = mode
         appModel.immersiveSpaceState = .inTransition
 
-        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        let result = await openImmersiveSpace(id: appModel.immersiveSpaceID)
+        switch result {
         case .opened:
             dismissWindow(id: "main")
         case .userCancelled, .error:
@@ -243,7 +267,7 @@ struct FeatureCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 20))
             .glassBackgroundEffect()
         }
-        .frame(width: 800, height: 180)
+        .frame(maxWidth: .infinity, minHeight: 180)
         .buttonStyle(.plain)
         .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 20))
         .disabled(isDisabled)

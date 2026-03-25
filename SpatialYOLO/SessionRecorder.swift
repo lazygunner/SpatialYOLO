@@ -372,7 +372,6 @@ class SessionRecorder {
             print("[处理] 会话 \(session.id) 无帧，直接标记完成。")
         }
 
-        await CloudMemorySyncService.shared.syncSession(directory: dir)
     }
 
     // MARK: - 卡通图生成 (Nano Banana API / Gemini 3.1 Flash Image Preview)
@@ -587,12 +586,7 @@ class SessionRecorder {
            let state = CloudSyncState(rawValue: rawValue) {
             return state == .syncing ? .pending : state
         }
-
-        guard !AppModel.loadMemorySyncBaseURL().isEmpty,
-              sessionStatus == .completed else {
-            return .notConfigured
-        }
-        return .pending
+        return .notConfigured
     }
 
     private static func parseISO8601Date(_ value: String?) -> Date? {
@@ -610,6 +604,14 @@ class SessionRecorder {
 }
 
 // MARK: - 数据模型
+
+enum CloudSyncState: String, Codable {
+    case notConfigured
+    case pending
+    case syncing
+    case synced
+    case failed
+}
 
 enum SessionStatus: String {
     case pending

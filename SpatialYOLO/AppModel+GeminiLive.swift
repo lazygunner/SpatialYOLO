@@ -16,10 +16,8 @@ extension AppModel {
         guard !isGeminiActive else { return }
         isGeminiActive = true
 
-        // 根据当前模式注入独立的系统提示词
-        let instruction = (activeFeature == .mahjong) ? aiLiveSystemInstruction() : aiLiveSystemInstruction()
-        // 修正逻辑：由于 mahjongSystemInstruction 被命名为 mahjong... 我需要纠正这里的调用
-        let finalInstruction = (activeFeature == .mahjong) ? mahjongSystemInstruction() : aiLiveSystemInstruction()
+        // 注入系统提示词
+        let finalInstruction = aiLiveSystemInstruction()
         activeService.systemInstruction = finalInstruction
         print("[AI] 注入系统提示词 (模式:\(activeFeature)，语言:\(language)，长度:\(finalInstruction.count))")
 
@@ -35,14 +33,6 @@ extension AppModel {
             }
         }
 
-        // 麻将模式下设置 Qwen 打牌事件回调
-        if activeFeature == .mahjong {
-            qwenService.onDiscardEvent = { [weak self] event in
-                DispatchQueue.main.async {
-                    self?.addDiscardEvent(event)
-                }
-            }
-        }
 
         activeService.connect()
 
@@ -273,78 +263,6 @@ extension AppModel {
 
         activeService.sendTextMessage(text)
         userInputText = ""
-    }
-
-    // MARK: - 牌局管理
-
-    /// 开始新牌局：清空记忆，以当前检测为初始手牌
-    func startMahjongGame() {
-        mahjongHandMemory = mahjongDetections.map { $0.classCode }
-        mahjongAbsenceCount = [:]
-        discardRecords = []
-        mahjongGameActive = true
-        mahjongAnalysisService.resetConversation()
-        print("[麻将] 牌局开始，初始手牌 \(mahjongHandMemory.count) 张")
-    }
-
-    /// 重置牌局：清空所有记忆
-    func resetMahjongGame() {
-        mahjongGameActive = false
-        mahjongHandMemory = []
-        mahjongAbsenceCount = [:]
-        discardRecords = []
-        mahjongAnalysisService.resetConversation()
-        print("[麻将] 牌局已重置")
-    }
-
-    /// 使用独立 LLM (qwen-plus) 分析麻将牌型
-    /// 牌局进行中使用记忆手牌，否则使用当前帧检测结果
-    func sendMahjongAnalysis() {
-        // 优先使用记忆手牌，否则用当前帧检测
-        let codes: [String]
-        if mahjongGameActive && !mahjongHandMemory.isEmpty {
-            codes = mahjongHandMemory
-        } else {
-            codes = mahjongDetections.map { $0.classCode }
-        }
-
-        print("[麻将AI] 触发独立 LLM 分析: codes=\(codes.count)张, 打牌记录=\(discardRecords.count)位玩家")
-        guard !codes.isEmpty else {
-            print("[麻将AI] 无检测到的牌，取消分析"); return
-        }
-        guard !mahjongAnalysisService.isAnalyzing else {
-            print("[麻将AI] 分析进行中，请稍候"); return
-        }
-
-        let records = discardRecords
-        let service = mahjongAnalysisService
-        Task {
-            await service.analyze(
-                handTiles: codes,
-                tileNames: AppModel.mahjongClassNames,
-                tileEmojis: AppModel.mahjongTileEmojis,
-                discardRecords: records
-            )
-        }
-    }
-
-    // MARK: - 打牌记录管理
-
-    /// 添加一条打牌事件（由 Omni 语音监听回调触发）
-    func addDiscardEvent(_ event: DiscardEvent) {
-        // 找到对应玩家的记录，没有则创建
-        if let index = discardRecords.firstIndex(where: { $0.player == event.player }) {
-            discardRecords[index].events.append(event)
-        } else {
-            discardRecords.append(PlayerDiscardRecord(player: event.player, events: [event]))
-        }
-        print("[麻将] 打牌记录: \(event.player) \(event.action) \(event.tile)")
-    }
-
-    /// 清空所有打牌记录
-    func clearDiscardRecords() {
-        discardRecords = []
-        print("[麻将] 打牌记录已清空")
     }
 
 }
