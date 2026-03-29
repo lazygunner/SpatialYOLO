@@ -21,6 +21,29 @@ enum AIProvider: String, CaseIterable {
     case qwen = "Qwen"
 }
 
+enum AIConversationLanguage {
+    case chinese
+    case english
+
+    var contextHeader: String {
+        switch self {
+        case .chinese:
+            return "[当前视觉检测上下文]"
+        case .english:
+            return "[Current Visual Context]"
+        }
+    }
+
+    var userMessageHeader: String {
+        switch self {
+        case .chinese:
+            return "[用户消息]"
+        case .english:
+            return "[User Message]"
+        }
+    }
+}
+
 // MARK: - 麻将打牌记录数据结构
 
 /// 单次打牌事件
@@ -48,6 +71,7 @@ protocol RealtimeAIService: Observable, AnyObject {
     var sessionRemainingSeconds: Int { get }
     var sessionStartTime: Date? { get }
     var framesSent: Int { get }
+    var inputLanguage: AIConversationLanguage { get set }
 
     /// 系统提示词，由外部在 connect() 前注入，各模式独立
     var systemInstruction: String { get set }

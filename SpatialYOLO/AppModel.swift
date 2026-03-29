@@ -42,6 +42,12 @@ public class AppModel: ObservableObject {
         var id: String { self.rawValue }
     }
 
+    struct AudioTranscriptLogEntry: Identifiable, Equatable {
+        let id = UUID()
+        var text: String
+        var frameJPEGData: Data?
+    }
+
     struct OpenClawTaskItem: Identifiable, Equatable {
         let id: String
         var status: OpenClawService.TaskStatus
@@ -61,12 +67,23 @@ public class AppModel: ObservableObject {
     var language: AppLanguage = .chinese {
         didSet {
             audioInputMonitor.language = language
+            let conversationLanguage = aiConversationLanguage()
+            let instruction = aiLiveSystemInstruction()
+            geminiService.inputLanguage = conversationLanguage
+            geminiService.systemInstruction = instruction
+            qwenService.inputLanguage = conversationLanguage
+            qwenService.systemInstruction = instruction
             // 如果 STT 正在运行，切换语言时需要重启识别器以应用新的 Locale
             if audioInputMonitor.isActive {
                 print("[Language] 语言切换为 \(language)，重启 STT...")
                 // 触发内部重启逻辑
                 audioInputMonitor.toggle()
                 audioInputMonitor.toggle()
+            }
+            if isGeminiActive {
+                print("[Language] 语言切换为 \(language)，重启 AI Live 会话以应用新提示词...")
+                stopGeminiSession()
+                startGeminiSession()
             }
         }
     }
@@ -160,6 +177,10 @@ public class AppModel: ObservableObject {
 
     // MARK: - 各模式独立系统提示词 (多语言支持)
     
+    func aiConversationLanguage() -> AIConversationLanguage {
+        language == .english ? .english : .chinese
+    }
+
     /// 获取当前语言下的 AI Live 系统提示词
     func aiLiveSystemInstruction() -> String {
         if language == .english {
@@ -218,6 +239,8 @@ public class AppModel: ObservableObject {
     // MARK: - AI Live 增强
     var faceDetections: [FaceDetection] = []     // 当前帧人脸检测结果
     var aiLiveModelName: String = "yolo11n"       // 实际加载的 YOLO 模型名
+    var audioTranscriptHistory: [AudioTranscriptLogEntry] = []
+    var audioTranscriptPreviewFrame: Data?
 
     // MARK: - 自动解说（图像场景变化检测）
     var autoNarrate: Bool = false                              // 自动解说开关

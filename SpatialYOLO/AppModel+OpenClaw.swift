@@ -34,9 +34,10 @@ extension AppModel {
     }
 
     func bindOpenClawTranscriptMonitoring() {
-        let handler: (String) -> Void = { [weak self] latestLine in
+        let previewHandler: (String) -> Void = { [weak self] latestLine in
             Task { @MainActor in
                 guard let self else { return }
+                self.updateAudioTranscriptPreviewFrame(for: latestLine)
 
                 let observed = latestLine
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -49,13 +50,71 @@ extension AppModel {
                 self.checkOpenClawTriggers(latestLine: observed)
             }
         }
-        audioInputMonitor.onTranscriptPreviewChanged = handler
-        audioInputMonitor.onTranscriptChanged = handler
+        let commitHandler: (String) -> Void = { [weak self] latestLine in
+            Task { @MainActor in
+                guard let self else { return }
+                self.appendAudioTranscriptHistoryEntry(text: latestLine)
+
+                let observed = latestLine
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+
+                guard observed != self.lastObservedOpenClawTranscript else { return }
+                self.lastObservedOpenClawTranscript = observed
+                guard !observed.isEmpty else { return }
+
+                self.checkOpenClawTriggers(latestLine: observed)
+            }
+        }
+        audioInputMonitor.onTranscriptPreviewChanged = previewHandler
+        audioInputMonitor.onTranscriptChanged = commitHandler
     }
 
     func unbindOpenClawTranscriptMonitoring() {
         audioInputMonitor.onTranscriptPreviewChanged = nil
         audioInputMonitor.onTranscriptChanged = nil
+    }
+
+    private func updateAudioTranscriptPreviewFrame(for latestLine: String) {
+        let normalized = latestLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        audioTranscriptPreviewFrame = normalized.isEmpty ? nil : snapshotCurrentAPIVideoFrame()
+    }
+
+    private func appendAudioTranscriptHistoryEntry(text: String) {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        let snapshot = snapshotCurrentAPIVideoFrame()
+        let lineSegments = normalized
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var segments: [String] = []
+
+        for line in lineSegments {
+            let parsed = TranscriptSentenceParser.parse(line)
+            segments.append(contentsOf: parsed.sentences)
+            if !parsed.currentFragment.isEmpty {
+                segments.append(parsed.currentFragment)
+            }
+        }
+
+        for segment in segments {
+            audioTranscriptHistory.append(
+                AudioTranscriptLogEntry(
+                    text: segment,
+                    frameJPEGData: snapshot
+                )
+            )
+        }
+        if audioTranscriptHistory.count > 8 {
+            audioTranscriptHistory.removeFirst(audioTranscriptHistory.count - 8)
+        }
+        audioTranscriptPreviewFrame = nil
+    }
+
+    private func snapshotCurrentAPIVideoFrame() -> Data? {
+        guard let lastProcessedFrame, !lastProcessedFrame.isEmpty else { return nil }
+        return lastProcessedFrame
     }
 
     func checkOpenClawTriggers(latestLine: String) {

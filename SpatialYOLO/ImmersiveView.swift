@@ -58,7 +58,11 @@ struct ImmersiveView: View {
                     AILiveHUDView(model: appModel)
 
                     // 环境语音监听：波形 + 本地 STT（独立开关）
-                    AudioMonitorView(monitor: appModel.audioInputMonitor)
+                    AudioMonitorView(
+                        monitor: appModel.audioInputMonitor,
+                        language: appModel.language,
+                        historyEntries: appModel.audioTranscriptHistory
+                    )
                         .frame(width: 960)
 
                     // 控制面板（HUD 风格）

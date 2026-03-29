@@ -18,7 +18,9 @@ extension AppModel {
 
         // 注入系统提示词
         let finalInstruction = aiLiveSystemInstruction()
+        let finalLanguage = aiConversationLanguage()
         activeService.systemInstruction = finalInstruction
+        activeService.inputLanguage = finalLanguage
         print("[AI] 注入系统提示词 (模式:\(activeFeature)，语言:\(language)，长度:\(finalInstruction.count))")
 
         // Gemini 会话过期时自动重连
@@ -51,6 +53,7 @@ extension AppModel {
         sessionRecorder.stopSession()
         lastSentThumbnail = nil
         isVoiceSamplingActive = false
+        audioTranscriptPreviewFrame = nil
         unbindOpenClawTranscriptMonitoring()
         lastTriggeredTranscript = ""
         lastObservedOpenClawTranscript = ""
@@ -79,13 +82,18 @@ extension AppModel {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         let timeStr = formatter.string(from: now)
+        let isEnglish = language == .english
 
-        var lines: [String] = ["[帧分析] \(timeStr)"]
+        var lines: [String] = [isEnglish ? "[Frame Analysis] \(timeStr)" : "[帧分析] \(timeStr)"]
 
         // 物体检测（含空间位置）
         let objCount = boundingBoxesLeft.count
         if objCount > 0 {
-            lines.append("[物体检测] \(objCount) 个目标:")
+            lines.append(
+                isEnglish
+                ? "[Object Detection] \(objCount) object\(objCount == 1 ? "" : "s"):"
+                : "[物体检测] \(objCount) 个目标:"
+            )
             for i in 0..<objCount {
                 let cls = i < detectedClassesLeft.count ? detectedClassesLeft[i] : "unknown"
                 let conf = i < confidencesLeft.count ? confidencesLeft[i] : 0
@@ -95,41 +103,40 @@ extension AppModel {
                 if i < boundingBoxesLeft.count {
                     let box = boundingBoxesLeft[i]
                     let centerX = box.origin.x + box.width / 2.0
-                    let posName: String
-                    if centerX < 0.33 {
-                        posName = "左侧"
-                    } else if centerX > 0.67 {
-                        posName = "右侧"
-                    } else {
-                        posName = "正前方"
-                    }
-
-                    if i < objectDistanceMeters.count, let d = objectDistanceMeters[i] {
-                        posStr = ", \(posName)约\(String(format: "%.1f", d))米"
-                    } else {
-                        posStr = ", \(posName)"
-                    }
+                    posStr = localizedSpatialPositionDescription(
+                        centerX: centerX,
+                        distanceMeters: i < objectDistanceMeters.count ? objectDistanceMeters[i] : nil
+                    )
                 }
 
                 lines.append("  - \(cls) (\(Int(conf))%)\(posStr)")
             }
         } else {
-            lines.append("[物体检测] 未检测到目标")
+            lines.append(isEnglish ? "[Object Detection] No objects detected" : "[物体检测] 未检测到目标")
         }
 
         // 人脸分析
         let faceCount = faceDetections.count
         if faceCount > 0 {
-            lines.append("[人脸分析] 检测到 \(faceCount) 张人脸:")
+            lines.append(
+                isEnglish
+                ? "[Face Analysis] Detected \(faceCount) face\(faceCount == 1 ? "" : "s"):"
+                : "[人脸分析] 检测到 \(faceCount) 张人脸:"
+            )
             for (idx, face) in faceDetections.enumerated() {
                 // 找主表情（最高分）
                 let sorted = face.expressionScores.sorted { $0.value > $1.value }
                 if let top = sorted.first {
-                    let topStr = top.key.rawValue
+                    let topStr = localizedFaceExpressionName(top.key)
                     let topPct = Int(top.value * 100)
-                    // top3
-                    let top3 = sorted.prefix(3).map { "\($0.key.rawValue):\(Int($0.value * 100))%" }.joined(separator: ", ")
-                    lines.append("  - 人脸\(idx + 1): 表情=\(topStr) (\(topPct)%) [候选: \(top3)]")
+                    let top3 = sorted.prefix(3)
+                        .map { "\(localizedFaceExpressionName($0.key)):\(Int($0.value * 100))%" }
+                        .joined(separator: ", ")
+                    if isEnglish {
+                        lines.append("  - Face \(idx + 1): expression=\(topStr) (\(topPct)%) [candidates: \(top3)]")
+                    } else {
+                        lines.append("  - 人脸\(idx + 1): 表情=\(topStr) (\(topPct)%) [候选: \(top3)]")
+                    }
                 }
             }
         }
@@ -145,7 +152,7 @@ extension AppModel {
 
         // 在主线程构建检测上下文（需要访问主线程属性）
         let contextText = buildDetectionContext()
-        print("[帧分析] \(contextText)")
+        print("\(language == .english ? "[Frame Analysis]" : "[帧分析]") \(contextText)")
 
         // CIImage 是轻量惰性对象，主线程创建安全且会 retain pixelBuffer
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
@@ -157,8 +164,7 @@ extension AppModel {
         let lastNarTime = self.lastNarrationTime
         let recorder = self.sessionRecorder
         let currentResponseText = self.activeService.responseText
-
-        let currentLabelsCapture = Set(self.detectedClassesLeft)
+        let appLanguage = self.language
 
         // 重型压缩工作放到后台线程
         Task.detached { [weak self] in
@@ -248,7 +254,11 @@ extension AppModel {
             }
 
             if shouldNarrate {
-                service.sendTextMessage("请简要描述你现在看到的画面内容。")
+                service.sendTextMessage(
+                    appLanguage == .english
+                    ? "Please briefly describe what you can see right now."
+                    : "请简要描述你现在看到的画面内容。"
+                )
             }
         }
     }
@@ -263,6 +273,50 @@ extension AppModel {
 
         activeService.sendTextMessage(text)
         userInputText = ""
+    }
+
+    private func localizedSpatialPositionDescription(centerX: CGFloat, distanceMeters: Float?) -> String {
+        let isEnglish = language == .english
+        let positionName: String
+        if centerX < 0.33 {
+            positionName = isEnglish ? "on the left" : "左侧"
+        } else if centerX > 0.67 {
+            positionName = isEnglish ? "on the right" : "右侧"
+        } else {
+            positionName = isEnglish ? "in front" : "正前方"
+        }
+
+        if let distanceMeters {
+            if isEnglish {
+                return ", \(positionName), about \(String(format: "%.1f", distanceMeters))m away"
+            }
+            return ", \(positionName)约\(String(format: "%.1f", distanceMeters))米"
+        }
+
+        return ", \(positionName)"
+    }
+
+    private func localizedFaceExpressionName(_ expression: FaceExpression) -> String {
+        guard language != .english else {
+            return expression.rawValue.capitalized
+        }
+
+        switch expression {
+        case .happy:
+            return "开心"
+        case .sad:
+            return "难过"
+        case .angry:
+            return "生气"
+        case .surprised:
+            return "惊讶"
+        case .fear:
+            return "害怕"
+        case .disgust:
+            return "厌恶"
+        case .neutral:
+            return "中性"
+        }
     }
 
 }

@@ -36,6 +36,7 @@ class QwenOmniService: RealtimeAIService {
 
     // MARK: - 系统提示词（由外部注入，各模式独立）
 
+    var inputLanguage: AIConversationLanguage = .chinese
     var systemInstruction: String = ""
 
 

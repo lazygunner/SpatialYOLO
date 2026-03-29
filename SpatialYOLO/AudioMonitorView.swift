@@ -7,9 +7,12 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct AudioMonitorView: View {
     let monitor: AudioInputMonitor
+    let language: AppModel.AppLanguage
+    let historyEntries: [AppModel.AudioTranscriptLogEntry]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -52,7 +55,7 @@ struct AudioMonitorView: View {
                 .fill(sttDotColor)
                 .frame(width: 6, height: 6)
 
-            Text("ENV LISTEN")
+            Text(language == .english ? "ENV LISTEN" : "环境监听")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(Color.hudCyan.opacity(0.6))
 
@@ -66,8 +69,8 @@ struct AudioMonitorView: View {
 
     @ViewBuilder
     private var historySection: some View {
-        if !monitor.committedLines.isEmpty {
-            Text("HISTORY")
+        if !displayHistoryEntries.isEmpty {
+            Text(language == .english ? "HISTORY" : "历史记录")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(Color.white.opacity(0.45))
                 .padding(.horizontal, 2)
@@ -75,8 +78,15 @@ struct AudioMonitorView: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(monitor.committedLines.enumerated()), id: \.offset) { index, line in
-                            historyLine(line, index: index)
+                        ForEach(displayHistoryEntries) { entry in
+                            transcriptRow(
+                                text: formattedTranscriptText(entry.text),
+                                frameJPEGData: entry.frameJPEGData,
+                                textColor: .white.opacity(0.88),
+                                borderColor: Color.white.opacity(0.12),
+                                backgroundColor: Color.white.opacity(0.04)
+                            )
+                            .id(entry.id)
                         }
 
                         Color.clear
@@ -94,14 +104,15 @@ struct AudioMonitorView: View {
                 )
                 .cornerRadius(3)
                 .transition(.opacity)
-                .animation(.easeInOut(duration: 0.2), value: historySignature)
+                .animation(.easeInOut(duration: 0.2), value: historyScrollTargetID)
                 .onAppear {
-                    proxy.scrollTo("audioTranscriptAnchor", anchor: .bottom)
+                    scrollHistory(proxy)
                 }
-                .onChange(of: historySignature) {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        proxy.scrollTo("audioTranscriptAnchor", anchor: .bottom)
-                    }
+                .onChange(of: historyScrollTargetID) {
+                    scrollHistory(proxy, animated: true)
+                }
+                .onChange(of: displayHistoryEntries.count) {
+                    scrollHistory(proxy, animated: true)
                 }
             }
         }
@@ -109,14 +120,16 @@ struct AudioMonitorView: View {
 
     private var liveInputSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("LIVE INPUT")
+            Text(language == .english ? "LIVE INPUT" : "实时输入")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(Color.hudCyan.opacity(0.65))
                 .padding(.horizontal, 2)
 
-            Text(monitor.localTranscript.isEmpty ? "Listening..." : monitor.localTranscript)
+            Text(monitor.localTranscript.isEmpty ? liveInputPlaceholder : formattedTranscriptText(monitor.localTranscript))
                 .font(.system(size: 13, weight: .regular, design: .monospaced))
                 .foregroundColor(monitor.localTranscript.isEmpty ? Color.hudCyan.opacity(0.45) : Color.hudCyan.opacity(0.92))
+                .multilineTextAlignment(.leading)
+                .lineSpacing(3)
                 .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
@@ -129,20 +142,101 @@ struct AudioMonitorView: View {
         }
     }
 
-    private func historyLine(_ line: String, index: Int) -> some View {
-        Text(line)
-            .font(.system(size: 13, weight: .regular, design: .monospaced))
-            .foregroundColor(.white.opacity(0.88))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.white.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .id(index)
+    private func transcriptRow(
+        text: String,
+        frameJPEGData: Data?,
+        textColor: Color,
+        borderColor: Color,
+        backgroundColor: Color,
+    ) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(text)
+                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                .foregroundColor(textColor)
+                .multilineTextAlignment(.leading)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+
+            transcriptFrameThumbnail(
+                frameJPEGData: frameJPEGData,
+                borderColor: borderColor
+            )
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(backgroundColor)
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(borderColor, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
-    private var historySignature: String {
-        monitor.committedLines.joined(separator: "\n")
+    private var historyScrollTargetID: UUID? {
+        displayHistoryEntries.last?.id
+    }
+
+    private var liveInputPlaceholder: String {
+        language == .english ? "Listening..." : "正在监听..."
+    }
+
+    private var displayHistoryEntries: [AppModel.AudioTranscriptLogEntry] {
+        if !historyEntries.isEmpty {
+            return historyEntries
+        }
+
+        return monitor.committedLines.map {
+            AppModel.AudioTranscriptLogEntry(text: $0, frameJPEGData: nil)
+        }
+    }
+
+    @ViewBuilder
+    private func transcriptFrameThumbnail(
+        frameJPEGData: Data?,
+        borderColor: Color
+    ) -> some View {
+        Group {
+            if let frameJPEGData, let image = UIImage(data: frameJPEGData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: 72, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(borderColor.opacity(0.75), lineWidth: 1)
+        )
+    }
+
+    private func formattedTranscriptText(_ text: String) -> String {
+        guard language == .english else { return text }
+
+        return text
+            .replacingOccurrences(of: ". ", with: ".\n")
+            .replacingOccurrences(of: "? ", with: "?\n")
+            .replacingOccurrences(of: "! ", with: "!\n")
+            .replacingOccurrences(of: "; ", with: ";\n")
+    }
+
+    private func scrollHistory(_ proxy: ScrollViewProxy, animated: Bool = false) {
+        let action = {
+            proxy.scrollTo("audioTranscriptAnchor", anchor: .bottom)
+        }
+
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    action()
+                }
+            } else {
+                action()
+            }
+        }
     }
 
     private var sttDotColor: Color {
@@ -157,11 +251,16 @@ struct AudioMonitorView: View {
 
     private var sttStatusLabel: String {
         switch monitor.sttStatus {
-        case .active:       return "STT  LIVE"
-        case .requesting:   return "STT  INIT"
-        case .unavailable:  return "STT  N/A"
-        case .error:        return "STT  ERR"
-        case .idle:         return "STT  OFF"
+        case .active:
+            return language == .english ? "STT  LIVE" : "STT  运行"
+        case .requesting:
+            return language == .english ? "STT  INIT" : "STT  初始化"
+        case .unavailable:
+            return language == .english ? "STT  N/A" : "STT  不可用"
+        case .error:
+            return language == .english ? "STT  ERR" : "STT  错误"
+        case .idle:
+            return language == .english ? "STT  OFF" : "STT  关闭"
         }
     }
 }

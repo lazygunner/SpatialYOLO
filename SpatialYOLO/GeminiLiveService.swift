@@ -35,6 +35,7 @@ class GeminiLiveService: RealtimeAIService {
 
     // MARK: - 系统提示词（由外部注入，各模式独立）
 
+    var inputLanguage: AIConversationLanguage = .chinese
     var systemInstruction: String = ""
 
 
@@ -43,8 +44,9 @@ class GeminiLiveService: RealtimeAIService {
     private var transcriptFormatter = TranscriptConversationFormatter()
     private var lastModelTranscriptText: String = ""
     private var lastUserTranscriptText: String = ""
+    private var pendingDetectionContext: String = ""
     private let apiKey: String
-    private let model = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+    private let model = "models/gemini-3.1-flash-live-preview"
     private var webSocketTask: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var sessionTimer: Task<Void, Never>?
@@ -95,6 +97,19 @@ class GeminiLiveService: RealtimeAIService {
         config.timeoutIntervalForRequest = 30       // 初始连接握手超时
         config.timeoutIntervalForResource = 300     // WebSocket 长连接，5 分钟资源超时
         let delegate = WebSocketDelegate()
+        delegate.onOpen = { [weak self] in
+            guard let self = self else { return }
+            print("[GeminiLive] WebSocket 已打开，开始发送 setup...")
+
+            // 先开始接收，再发送 setup，便于捕获初始化阶段的错误消息
+            self.startReceiving()
+            self.sendSetupMessage()
+
+            // 启动音频引擎（后台线程执行，避免 AVAudioSession.setActive 阻塞主线程）
+            Task.detached { [weak self] in
+                self?.setupAudioEngine()
+            }
+        }
         delegate.onError = { [weak self] message in
             DispatchQueue.main.async {
                 guard let self = self, self.connectionState == .connected || self.connectionState == .connecting else { return }
@@ -107,17 +122,6 @@ class GeminiLiveService: RealtimeAIService {
 
         print("[GeminiLive] WebSocket task 创建完成，调用 resume()...")
         webSocketTask?.resume()
-
-        // 发送 setup 消息
-        sendSetupMessage()
-
-        // 开始接收消息
-        startReceiving()
-
-        // 启动音频引擎（后台线程执行，避免 AVAudioSession.setActive 阻塞主线程）
-        Task.detached { [weak self] in
-            self?.setupAudioEngine()
-        }
     }
 
     /// 断开 WebSocket 连接
@@ -142,7 +146,7 @@ class GeminiLiveService: RealtimeAIService {
         sessionStartTime = nil
         sessionRemainingSeconds = 120
         framesSent = 0
-
+        pendingDetectionContext = ""
     }
 
     // MARK: - 发送消息
@@ -163,11 +167,9 @@ class GeminiLiveService: RealtimeAIService {
 
         let message: [String: Any] = [
             "realtimeInput": [
-                "mediaChunks": [
-                    [
-                        "mimeType": "image/jpeg",
-                        "data": base64String
-                    ]
+                "video": [
+                    "mimeType": "image/jpeg",
+                    "data": base64String
                 ]
             ]
         ]
@@ -175,24 +177,10 @@ class GeminiLiveService: RealtimeAIService {
         sendJSON(message)
     }
 
-    /// 发送结构化检测上下文（turnComplete=false，不触发响应）
+    /// Gemini 3.1 中 clientContent 只适合会话初始 history seed。
+    /// 实时对话期间将当前检测上下文缓存，在下次显式文本提问时合并发送。
     func sendDetectionContext(_ text: String) {
-        guard connectionState == .connected else { return }
-
-        let message: [String: Any] = [
-            "clientContent": [
-                "turns": [
-                    [
-                        "role": "user",
-                        "parts": [
-                            ["text": text]
-                        ]
-                    ]
-                ],
-                "turnComplete": false
-            ]
-        ]
-        sendJSON(message)
+        pendingDetectionContext = text
     }
 
     /// 发送用户文字消息
@@ -211,17 +199,10 @@ class GeminiLiveService: RealtimeAIService {
             print("[GeminiLive] 已打断当前音频播放")
         }
 
+        let effectiveText = buildRealtimeTextPayload(for: text)
         let message: [String: Any] = [
-            "clientContent": [
-                "turns": [
-                    [
-                        "role": "user",
-                        "parts": [
-                            ["text": text]
-                        ]
-                    ]
-                ],
-                "turnComplete": true
+            "realtimeInput": [
+                "text": effectiveText
             ]
         ]
 
@@ -255,7 +236,12 @@ class GeminiLiveService: RealtimeAIService {
                         ]
                     ],
                 ],
+                "inputAudioTranscription": [:],
                 "outputAudioTranscription": [:],
+                "realtimeInputConfig": [
+                    // 3.1 默认会把所有视频帧都纳入 turn；维持旧行为和成本模型，只在活动期计入 turn。
+                    "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY"
+                ],
                 "systemInstruction": [
                     "parts": [
                         ["text": instruction]
@@ -372,6 +358,11 @@ class GeminiLiveService: RealtimeAIService {
             return
         }
 
+        if let sessionResumptionUpdate = json["sessionResumptionUpdate"] as? [String: Any] {
+            print("[GeminiLive] sessionResumptionUpdate: \(sessionResumptionUpdate)")
+            return
+        }
+
         // 打印未识别的顶层消息类型
         let topKeys = json.keys.sorted().joined(separator: ", ")
         print("[GeminiLive] 未识别消息 keys: [\(topKeys)]")
@@ -387,13 +378,12 @@ class GeminiLiveService: RealtimeAIService {
            let parts = modelTurn["parts"] as? [[String: Any]] {
 
             for part in parts {
-                // 文字响应（思考过程，仅打印日志，不显示在 UI）
-                if let text = part["text"] as? String {
+                if let text = part["text"] as? String, !text.isEmpty {
+                    fallbackModelTranscript = text
                     isModelSpeaking = true
-                    print("[GeminiLive] 收到 thought: \(text.prefix(200))")
+                    print("[GeminiLive] 收到文本分片: \(text.prefix(200))")
                 }
 
-                // 音频转录
                 if let transcript = part["transcript"] as? String {
                     fallbackModelTranscript = transcript
                     isModelSpeaking = true
@@ -606,16 +596,29 @@ class GeminiLiveService: RealtimeAIService {
         let base64String = pcmData.base64EncodedString()
         let message: [String: Any] = [
             "realtimeInput": [
-                "mediaChunks": [
-                    [
-                        "mimeType": "audio/pcm",
-                        "data": base64String
-                    ]
+                "audio": [
+                    "mimeType": "audio/pcm;rate=16000",
+                    "data": base64String
                 ]
             ]
         ]
 
         sendJSON(message)
+    }
+
+    private func buildRealtimeTextPayload(for text: String) -> String {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedContext = pendingDetectionContext.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedContext.isEmpty else { return trimmedText }
+
+        return """
+        \(inputLanguage.contextHeader)
+        \(trimmedContext)
+
+        \(inputLanguage.userMessageHeader)
+        \(trimmedText)
+        """
     }
 
     // MARK: - 音频播放
@@ -691,10 +694,12 @@ private extension Character {
 
 private class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate {
 
+    var onOpen: (() -> Void)?
     var onError: ((String) -> Void)?
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
         print("[GeminiLive] WebSocket 已打开, protocol: \(`protocol` ?? "none")")
+        onOpen?()
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {

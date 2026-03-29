@@ -274,7 +274,7 @@ class AudioInputMonitor {
             guard let self else { return }
 
             if let result {
-                let currentLine = self.normalizeTranscriptLine(result.bestTranscription.formattedString)
+                let currentLine = self.normalizeTranscript(result.bestTranscription)
 
                 DispatchQueue.main.async {
                     self.speechPauseTimer?.invalidate()
@@ -377,6 +377,54 @@ class AudioInputMonitor {
     }
 
     private func normalizeTranscriptLine(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizeTranscript(_ transcription: SFTranscription) -> String {
+        if language == .english {
+            return formatEnglishTranscript(transcription)
+        }
+        return normalizeTranscriptLine(transcription.formattedString)
+    }
+
+    private func formatEnglishTranscript(_ transcription: SFTranscription) -> String {
+        let segments = transcription.segments
+        guard !segments.isEmpty else {
+            return normalizeTranscriptLine(transcription.formattedString)
+        }
+
+        var lines: [String] = []
+        var currentWords: [String] = []
+        var previousSegmentEnd: TimeInterval?
+        let pauseThreshold: TimeInterval = 0.55
+
+        for segment in segments {
+            let token = normalizeTranscriptToken(segment.substring)
+            guard !token.isEmpty else { continue }
+
+            if let previousSegmentEnd {
+                let gap = segment.timestamp - previousSegmentEnd
+                if gap >= pauseThreshold, !currentWords.isEmpty {
+                    lines.append(currentWords.joined(separator: " "))
+                    currentWords.removeAll(keepingCapacity: true)
+                }
+            }
+
+            currentWords.append(token)
+            previousSegmentEnd = segment.timestamp + segment.duration
+        }
+
+        if !currentWords.isEmpty {
+            lines.append(currentWords.joined(separator: " "))
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func normalizeTranscriptToken(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
